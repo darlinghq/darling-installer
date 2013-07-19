@@ -17,10 +17,12 @@ add_executable(darling-installer
 	src/archive/FileReader.cpp
 	src/archive/XARArchive.cpp
 	src/archive/SubReader.cpp
-	src/archive/InflateReader.cpp
+	src/archive/ArchivedFileReader.cpp
+	src/archive/GzipReader.cpp
+	src/archive/CPIOArchive.cpp
 	src/archive/main-test.cpp
 )
 
-target_link_libraries(darling-installer -lz ${LIBXML2_LIBRARY})
+target_link_libraries(darling-installer -lz -lbz2 ${LIBXML2_LIBRARY})
 #install(TARGETS darling-installer RUNTIME DESTINATION bin)
 

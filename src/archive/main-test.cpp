@@ -8,7 +8,7 @@ int main(int argc, char** argv)
 	XARArchive* xar = new XARArchive(file);
 
 
-	delete file;
+	delete xar;
 	return 0;
 }
 

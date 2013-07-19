@@ -1,12 +1,13 @@
 #include "XARArchive.h"
 #include "xar.h"
 #include <stdexcept>
-#include "zlib.h"
 #include <memory>
 #include <cstring>
+#include <zlib.h>
 #include "be.h"
 #include <iostream>
 #include <sstream>
+#include "ArchivedFileReader.h"
 
 XARArchive::XARArchive(Reader* reader)
 	: m_reader(reader), m_toc(nullptr)
@@ -94,7 +95,7 @@ Reader* XARArchive::openFile(xmlNodeSetPtr nodes)
 		return nullptr;
 
 	m_context->node = nodes->nodeTab[0];
-	xpathObj = xmlXPathEvalExpression("string(encoding/@style)", m_context);
+	xpathObj = xmlXPathEvalExpression((const xmlChar*) "string(encoding/@style)", m_context);
 
 	if (!xpathObj->stringval)
 	{
@@ -106,19 +107,10 @@ Reader* XARArchive::openFile(xmlNodeSetPtr nodes)
 	offset = extractXMLNumber(m_context, "string(offset)");
 	size = extractXMLNumber(m_context, "string(size)");
 
-	if (strcmp(xpathObj->stringval, "application/octet-stream") == 0)
-	{
-		if (size != length)
-			throw std::runtime_error("size != length for octet-stream");
-
-		retval = new SubReader(m_reader, offset, size);
-	}
-	else if (strcmp(xpathObj->stringval, "application/x-gzip") == 0)
-	{
-		// TODO: deflate
-	}
+	retval = ArchivedFileReader::create((const char*) xpathObj->stringval, m_reader, length, offset, size);
 
 	xmlXPathFreeObject(xpathObj);
+	return retval;
 }
 
 int64_t XARArchive::extractXMLNumber(xmlXPathContextPtr context, const char* query)
@@ -126,9 +118,9 @@ int64_t XARArchive::extractXMLNumber(xmlXPathContextPtr context, const char* que
 	xmlXPathObjectPtr xpathObj;
 	int64_t rv = -1;
 
-	xpathObj = xmlXPathEvalExpression(query, context);
+	xpathObj = xmlXPathEvalExpression((const xmlChar*) query, context);
 	if (xpathObj && xpathObj->stringval)
-		rv = std::stoll(xpathObj->stringval);
+		rv = std::stoll((const char*) xpathObj->stringval);
 
 	xmlXPathFreeObject(xpathObj);
 	return rv;
