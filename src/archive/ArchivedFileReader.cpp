@@ -72,6 +72,7 @@ int32_t ArchivedFileReader_Deflate::read(void* buf, int32_t count, uint64_t offs
 {
 	if (offset != m_lastReadEnd)
 	{
+		return -1;
 	}
 
 	uint32_t done;
@@ -120,6 +121,7 @@ int32_t ArchivedFileReader_Bzip2::read(void* buf, int32_t count, uint64_t offset
 {
 	if (offset != m_lastReadEnd)
 	{
+		return -1;
 	}
 
 	uint32_t done;

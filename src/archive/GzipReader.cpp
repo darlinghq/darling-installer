@@ -17,6 +17,18 @@ GzipReader::~GzipReader()
 	delete m_reader;
 }
 
+bool GzipReader::isGzip(Reader* reader)
+{
+	gzip_header hdr;
+	
+	if (reader->read(&hdr, sizeof(hdr), 0) != sizeof(hdr))
+		return false;
+	if (hdr.id1 != 0x1f || hdr.id2 != 0x8b)
+		return false;
+	
+	return true;
+}
+
 void GzipReader::readHeader(Reader* reader)
 {
 	gzip_header hdr;

@@ -10,6 +10,8 @@ public:
 	~GzipReader();
 	int32_t read(void* buf, int32_t count, uint64_t offset) override;
 	uint64_t length() override;
+	
+	static bool isGzip(Reader* reader);
 private:
 	void readHeader(Reader* reader);
 	void skipString(Reader* reader, uint32_t& inputPos);

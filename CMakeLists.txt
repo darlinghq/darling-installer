@@ -14,17 +14,18 @@ find_package(Libxml2 REQUIRED)
 include_directories(${LIBXML2_INCLUDE_DIR})
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-add_executable(darling-installer
+add_executable(installer
 	src/archive/FileReader.cpp
 	src/archive/XARArchive.cpp
 	src/archive/SubReader.cpp
 	src/archive/ArchivedFileReader.cpp
 	src/archive/GzipReader.cpp
 	src/archive/CPIOArchive.cpp
+	src/archive/PbzxReader.cpp
 	src/bom/BOMStore.cpp
 	src/main-test.cpp
 )
 
-target_link_libraries(darling-installer -lz -lbz2 ${LIBXML2_LIBRARY})
-#install(TARGETS darling-installer RUNTIME DESTINATION bin)
+target_link_libraries(installer -lz -lbz2 -llzma ${LIBXML2_LIBRARY})
+install(TARGETS installer RUNTIME DESTINATION libexec/darling/usr/bin)
 
