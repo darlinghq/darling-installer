@@ -22,6 +22,11 @@ PbzxReader::PbzxReader(Reader* reader)
 	m_compressedOffset = 12;
 }
 
+PbzxReader::~PbzxReader()
+{
+	lzma_end(&m_strm);
+}
+
 bool PbzxReader::isPbzx(Reader* reader)
 {
 	uint32_t magic;
@@ -36,12 +41,12 @@ bool PbzxReader::isPbzx(Reader* reader)
 
 int32_t PbzxReader::read(void* buf, int32_t count, uint64_t offset)
 {
-	if (offset != m_lastPos)
+	if (offset != m_lastReadEnd)
 		return -1;
 	
 	uint32_t done = 0;
 
-	m_strm.next_out = buf;
+	m_strm.next_out = static_cast<uint8_t*>(buf);
 	m_strm.avail_out = count;
 
 	while (m_strm.avail_out > 0)
@@ -76,7 +81,7 @@ int32_t PbzxReader::read(void* buf, int32_t count, uint64_t offset)
 			m_compressedOffset += rd;
 			m_remainingRunLength -= rd;
 			
-			m_strm.next_in = m_buffer;
+			m_strm.next_in = reinterpret_cast<const uint8_t*>(m_buffer);
 			m_strm.avail_in = rd;
 		}
 		

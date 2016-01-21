@@ -23,6 +23,8 @@ add_executable(installer
 	src/archive/CPIOArchive.cpp
 	src/archive/PbzxReader.cpp
 	src/bom/BOMStore.cpp
+        src/bom/BOMBTree.cpp
+        src/bom/BOMFilesBTree.cpp
 	src/main-test.cpp
 )
 
