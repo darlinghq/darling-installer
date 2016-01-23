@@ -4,14 +4,13 @@
 #include <cstring>
 #include <memory>
 
-CPIOArchive::CPIOArchive(Reader* reader)
+CPIOArchive::CPIOArchive(std::shared_ptr<Reader> reader)
 	: m_reader(reader), m_offset(0)
 {
 }
 
 CPIOArchive::~CPIOArchive()
 {
-	delete m_reader;
 }
 
 static int fromoct(char (&value)[6])
@@ -24,14 +23,11 @@ static long long fromoct(char (&value)[11])
 	return std::stol(std::string(value, 11), nullptr, 8);
 }
 
-bool CPIOArchive::next(std::string& name, struct stat& st, Reader** reader)
+bool CPIOArchive::next(std::string& name, struct stat& st, std::shared_ptr<Reader>& reader)
 {
 	cpio_odc_header hdr;
 	std::unique_ptr<char[]> filename;
 	int fnlen;
-
-	if (reader != nullptr)
-		*reader = nullptr;
 
 	if (m_reader->read(&hdr, sizeof(hdr), m_offset) != sizeof(hdr))
 		return false;
@@ -66,8 +62,7 @@ bool CPIOArchive::next(std::string& name, struct stat& st, Reader** reader)
 	name = filename.get();
 	m_offset += fnlen;
 
-	if (reader != nullptr)
-		*reader = new SubReader(m_reader, m_offset, st.st_size);
+	reader.reset(new SubReader(m_reader, m_offset, st.st_size));
 
 	m_offset += st.st_size;
 	return true;

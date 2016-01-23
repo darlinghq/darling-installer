@@ -1,8 +1,9 @@
 #ifndef BENDIAN_H
 #define BENDIAN_H
 #include <stdint.h>
-#ifdef __FreeBSD__
+#if defined(__FreeBSD__) || defined(DARLING)
 #include <sys/endian.h>
+#include "compat_endian.h"
 #elif defined(_WIN32)
 	static uint16_t htobe16(uint16_t x) {
 		union { uint16_t u16; uint8_t v[2]; } ret;
@@ -47,6 +48,7 @@
 #else
 #include <endian.h>
 #endif
+
 
 template <typename T> T be(T value);
 

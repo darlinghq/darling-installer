@@ -2,14 +2,9 @@
 #include <cstring>
 #include <stdexcept>
 #include <algorithm>
+#include "be.h"
 
-#ifdef __FreeBSD__
-#	include <sys/endian.h>
-#else
-#	include <endian.h>
-#endif
-
-PbzxReader::PbzxReader(Reader* reader)
+PbzxReader::PbzxReader(std::shared_ptr<Reader> reader)
 : ArchivedFileReader(reader, 0)
 {
 	if (!isPbzx(reader))
@@ -27,7 +22,7 @@ PbzxReader::~PbzxReader()
 	lzma_end(&m_strm);
 }
 
-bool PbzxReader::isPbzx(Reader* reader)
+bool PbzxReader::isPbzx(std::shared_ptr<Reader> reader)
 {
 	uint32_t magic;
 	
@@ -76,7 +71,7 @@ int32_t PbzxReader::read(void* buf, int32_t count, uint64_t offset)
 				m_remainingRunLength = be64toh(m_remainingRunLength);
 			}
 			
-			int32_t rd = m_reader->read(m_buffer, std::min(sizeof(m_buffer), m_remainingRunLength), m_compressedOffset);
+			int32_t rd = m_reader->read(m_buffer, std::min<uint32_t>(sizeof(m_buffer), m_remainingRunLength), m_compressedOffset);
 			
 			m_compressedOffset += rd;
 			m_remainingRunLength -= rd;

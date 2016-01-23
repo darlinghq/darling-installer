@@ -1,23 +1,21 @@
 #include "GzipReader.h"
 #include <stdexcept>
 #include <cstring>
-#include <endian.h>
 #include "gzip.h"
 #include "ArchivedFileReader.h"
 #include "SubReader.h"
+#include "be.h"
 
-GzipReader::GzipReader(Reader* reader)
-	: m_reader(nullptr)
+GzipReader::GzipReader(std::shared_ptr<Reader> reader)
 {
 	readHeader(reader);
 }
 
 GzipReader::~GzipReader()
 {
-	delete m_reader;
 }
 
-bool GzipReader::isGzip(Reader* reader)
+bool GzipReader::isGzip(std::shared_ptr<Reader> reader)
 {
 	gzip_header hdr;
 	
@@ -29,18 +27,19 @@ bool GzipReader::isGzip(Reader* reader)
 	return true;
 }
 
-void GzipReader::readHeader(Reader* reader)
+void GzipReader::readHeader(std::shared_ptr<Reader> reader)
 {
 	gzip_header hdr;
-	uint16_t extraLen;
+	// uint16_t extraLen;
 	uint32_t uncompressedLength;
-	uint32_t inputPos;
+	// uint32_t inputPos;
 
 	if (reader->read(&hdr, sizeof(hdr), 0) != sizeof(hdr))
 		throw std::runtime_error("Cannot read gzip header");
 	if (hdr.id1 != 0x1f || hdr.id2 != 0x8b)
 		throw std::runtime_error("Invalid gzip header");
 
+	/*
 	inputPos = sizeof(hdr);
 
 	if (hdr.flags & GZIP_FEXTRA)
@@ -59,18 +58,16 @@ void GzipReader::readHeader(Reader* reader)
 
 	if (hdr.flags & GZIP_FHCRC)
 		inputPos += 2;
-
+	*/
+	
 	if (reader->read(&uncompressedLength, 4, reader->length()-4) != 4)
 		throw std::runtime_error("Read error");
 	uncompressedLength = le32toh(uncompressedLength);
 
-	m_reader = new ArchivedFileReader_Deflate(
-			new SubReader(reader, inputPos, reader->length()-inputPos-8),
-			uncompressedLength
-	);
+	m_reader.reset(new ArchivedFileReader_Deflate(reader, uncompressedLength, true));
 }
 
-void GzipReader::skipString(Reader* reader, uint32_t& inputPos)
+void GzipReader::skipString(std::shared_ptr<Reader> reader, uint32_t& inputPos)
 {
 	char c;
 

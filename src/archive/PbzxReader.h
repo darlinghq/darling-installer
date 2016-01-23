@@ -7,11 +7,11 @@
 class PbzxReader : public ArchivedFileReader
 {
 public:
-	PbzxReader(Reader* reader);
+	PbzxReader(std::shared_ptr<Reader> reader);
 	virtual ~PbzxReader();
 	virtual int32_t read(void* buf, int32_t count, uint64_t offset) override;
 	
-	static bool isPbzx(Reader* reader);
+	static bool isPbzx(std::shared_ptr<Reader> reader);
 private:
 	lzma_stream m_strm = LZMA_STREAM_INIT;
 	uint64_t m_remainingRunLength = 0, m_lastFlags;

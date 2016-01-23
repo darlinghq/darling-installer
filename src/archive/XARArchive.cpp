@@ -9,7 +9,7 @@
 #include <sstream>
 #include "ArchivedFileReader.h"
 
-XARArchive::XARArchive(Reader* reader)
+XARArchive::XARArchive(std::shared_ptr<Reader> reader)
 	: m_reader(reader), m_toc(nullptr)
 {
 	xar_header hdr;
@@ -28,13 +28,14 @@ XARArchive::XARArchive(Reader* reader)
 
 	compressed.reset();
 	loadTOC(uncompressed.get(), be(hdr.toc_length_uncompressed));
+	
+	m_heapStart = be(hdr.size) + be(hdr.toc_length_compressed);
 }
 
 XARArchive::~XARArchive()
 {
 	xmlXPathFreeContext(m_context);
 	xmlFreeDoc(m_toc);
-	delete m_reader;
 }
 
 static std::vector<std::string> &split(const std::string &s, char delim, std::vector<std::string> &elems)
@@ -107,7 +108,8 @@ Reader* XARArchive::openFile(xmlNodeSetPtr nodes)
 	offset = extractXMLNumber(m_context, "string(offset)");
 	size = extractXMLNumber(m_context, "string(size)");
 
-	retval = ArchivedFileReader::create((const char*) xpathObj->stringval, m_reader, length, offset, size);
+	retval = ArchivedFileReader::create((const char*) xpathObj->stringval, m_reader, length,
+			m_heapStart + offset, size);
 
 	xmlXPathFreeObject(xpathObj);
 	return retval;
@@ -128,6 +130,8 @@ int64_t XARArchive::extractXMLNumber(xmlXPathContextPtr context, const char* que
 
 std::vector<std::string> XARArchive::listFiles()
 {
+	std::vector<std::string> rv;
+	return rv;
 }
 
 void XARArchive::decompressTOC(const char* in, size_t inLength, char* out, size_t outLength)
@@ -164,6 +168,6 @@ void XARArchive::loadTOC(const char* in, size_t inLength)
 	if (!m_toc)
 		throw std::runtime_error("Invalid XML data");
 	m_context = xmlXPathNewContext(m_toc);
-	std::cout << std::string(in, inLength) << std::endl;
+	// std::cout << std::string(in, inLength) << std::endl;
 }
 

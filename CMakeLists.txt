@@ -6,15 +6,32 @@ set(CMAKE_MODULE_PATH ${CMAKE_MODULE_PATH}
 	"${CMAKE_CURRENT_SOURCE_DIR}/cmake_modules/")
 
 add_definitions(-D_FILE_OFFSET_BITS=64)
-SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -ggdb")
+SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -nostdinc -nostdinc++ -std=c++11 -ggdb")
+set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -nostdlib -Wl,--version-script=${DARLING_TOP_DIRECTORY}/darwin.map")
 
-include(FindLibxml2)
+SET(CMAKE_INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib${SUFFIX}/darling")
+SET(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE) 
+SET(CMAKE_INSTALL_RPATH_USE_LINK_PATH TRUE)
 
-find_package(Libxml2 REQUIRED)
-include_directories(${LIBXML2_INCLUDE_DIR})
+add_definitions(-DRECEIPTS_DIR="/private/var/db/receipts")
+
+include_directories(${DARLING_TOP_DIRECTORY}/src/external/libxml2/include)
+include_directories(${CMAKE_BINARY_DIR}/src/external/libxml2/include)
+include_directories(${DARLING_TOP_DIRECTORY}/src/external/zlib)
+include_directories(${DARLING_TOP_DIRECTORY}/src/external/bzip2)
+include_directories(${DARLING_TOP_DIRECTORY}/src/libc/fbsdcompat)
+include_directories(${DARLING_TOP_DIRECTORY}/src/libc/include/FreeBSD)
+include_directories(${DARLING_TOP_DIRECTORY}/src/external/liblzma/src/liblzma/api)
+include_directories(${DARLING_TOP_DIRECTORY}/src/external/libcxx/include)
+include_directories(${DARLING_TOP_DIRECTORY}/src/external/icu/icuSources/common)
+include_directories(${DARLING_TOP_DIRECTORY}/src/external/corefoundation/Headers)
+include_directories(${CMAKE_BINARY_DIR}/src/external/corefoundation/Headers)
+include_directories(${DARLING_TOP_DIRECTORY}/src/external/foundation/Headers)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 
-add_executable(installer
+include(darling_exe)
+
+add_darling_executable(installer
 	src/archive/FileReader.cpp
 	src/archive/XARArchive.cpp
 	src/archive/SubReader.cpp
@@ -25,9 +42,16 @@ add_executable(installer
 	src/bom/BOMStore.cpp
         src/bom/BOMBTree.cpp
         src/bom/BOMFilesBTree.cpp
-	src/main-test.cpp
+        src/pkg/DistributionXml.cpp
+        src/pkg/PackageInfoXml.cpp
+        src/pkg/ReceiptsDb.cpp
+        src/pkg/installer.cpp
+	# src/main-test.cpp
+        src/main.cpp
+        src/main-lsbom.cpp
+        src/main-installer.cpp
 )
 
-target_link_libraries(installer -lz -lbz2 -llzma ${LIBXML2_LIBRARY})
+target_link_libraries(installer z lzma bz2 xml2 cxx CFF)
 install(TARGETS installer RUNTIME DESTINATION libexec/darling/usr/bin)
 

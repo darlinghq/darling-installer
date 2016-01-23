@@ -9,14 +9,14 @@
 class ArchivedFileReader_Bzip2 : public ArchivedFileReader
 {
 public:
-	ArchivedFileReader_Bzip2(Reader* reader, int64_t size);
+	ArchivedFileReader_Bzip2(std::shared_ptr<Reader> reader, int64_t size);
 	~ArchivedFileReader_Bzip2();
 	int32_t read(void* buf, int32_t count, uint64_t offset) override;
 private:
 	bz_stream m_strm;
 };
 
-ArchivedFileReader::ArchivedFileReader(Reader* reader, int64_t size)
+ArchivedFileReader::ArchivedFileReader(std::shared_ptr<Reader> reader, int64_t size)
 	: m_reader(reader), m_uncompressedLength(size),
 	m_lastReadEnd(0), m_compressedOffset(0)
 {
@@ -24,7 +24,6 @@ ArchivedFileReader::ArchivedFileReader(Reader* reader, int64_t size)
 
 ArchivedFileReader::~ArchivedFileReader()
 {
-	delete m_reader;
 }
 
 uint64_t ArchivedFileReader::length()
@@ -32,7 +31,7 @@ uint64_t ArchivedFileReader::length()
 	return m_uncompressedLength;
 }
 
-Reader* ArchivedFileReader::create(const char* mimeType, Reader* reader, int64_t length, int64_t offset, int64_t size)
+Reader* ArchivedFileReader::create(const char* mimeType, std::shared_ptr<Reader> reader, int64_t length, int64_t offset, int64_t size)
 {
 	Reader* r = new SubReader(reader, offset, length);
 
@@ -43,11 +42,11 @@ Reader* ArchivedFileReader::create(const char* mimeType, Reader* reader, int64_t
 	}
 	else if (strcmp(mimeType, "application/x-gzip") == 0)
 	{
-		return new ArchivedFileReader_Deflate(r, size);
+		return new ArchivedFileReader_Deflate(std::shared_ptr<Reader>(r), size);
 	}
 	else if (strcmp(mimeType, "application/x-bzip2") == 0)
 	{
-		return new ArchivedFileReader_Bzip2(r, size);
+		return new ArchivedFileReader_Bzip2(std::shared_ptr<Reader>(r), size);
 	}
 	else
 	{
@@ -56,11 +55,15 @@ Reader* ArchivedFileReader::create(const char* mimeType, Reader* reader, int64_t
 	}
 }
 
-ArchivedFileReader_Deflate::ArchivedFileReader_Deflate(Reader* reader, int64_t size)
+ArchivedFileReader_Deflate::ArchivedFileReader_Deflate(std::shared_ptr<Reader> reader, int64_t size, bool gzip)
 	: ArchivedFileReader(reader, size)
 {
 	memset(&m_strm, 0, sizeof(m_strm));
-	inflateInit(&m_strm);
+	
+	if (!gzip)
+		inflateInit(&m_strm);
+	else
+		inflateInit2(&m_strm, 16+MAX_WBITS);
 }
 
 ArchivedFileReader_Deflate::~ArchivedFileReader_Deflate()
@@ -105,7 +108,7 @@ int32_t ArchivedFileReader_Deflate::read(void* buf, int32_t count, uint64_t offs
 	return done;
 }
 
-ArchivedFileReader_Bzip2::ArchivedFileReader_Bzip2(Reader* reader, int64_t size)
+ArchivedFileReader_Bzip2::ArchivedFileReader_Bzip2(std::shared_ptr<Reader> reader, int64_t size)
 	: ArchivedFileReader(reader, size)
 {
 	memset(&m_strm, 0, sizeof(m_strm));
