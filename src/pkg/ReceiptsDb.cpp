@@ -6,6 +6,8 @@
 #include <fcntl.h>
 #include <stdexcept>
 #include <ctime>
+#include <sstream>
+#include <cstring>
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -18,8 +20,9 @@ static std::string getReceiptsPath(const char* identifier, const char* ext);
 
 bool ReceiptsDb::getInstalledPackageInfo(const char* identifier, ReceiptsDb::InstalledPackageInfo& info)
 {
-	std::string path, installDate;
+	std::string path;
 	CFDataRef data;
+	CFDateRef date;
 	CFDictionaryRef plist;
 	std::unique_ptr<Reader> fileReader;
 	std::unique_ptr<UInt8[]> fileData;
@@ -50,16 +53,9 @@ bool ReceiptsDb::getInstalledPackageInfo(const char* identifier, ReceiptsDb::Ins
 	info.prefixPath = cfstring2stdstring((CFStringRef) CFDictionaryGetValue(plist, CFSTR("InstallPrefixPath")));
 	info.installProcessName = cfstring2stdstring((CFStringRef) CFDictionaryGetValue(plist, CFSTR("InstallProcessName")));
 	info.packageFileName = cfstring2stdstring((CFStringRef) CFDictionaryGetValue(plist, CFSTR("PackageFileName")));
-	installDate = cfstring2stdstring((CFStringRef) CFDictionaryGetValue(plist, CFSTR("InstallDate")));
 	
-	if (!installDate.empty())
-	{
-		struct tm tm;
-		strptime(installDate.c_str(), "%Y-%m-%dT%H:%M:%SZ", &tm);
-		info.installDate = mktime(&tm);
-	}
-	else
-		info.installDate = 0;
+	date = (CFDateRef) CFDictionaryGetValue(plist, CFSTR("InstallDate"));
+	info.installDate = CFDateGetAbsoluteTime(date);
 	
 	CFRelease(plist);
 	return true;
@@ -132,10 +128,9 @@ void ReceiptsDb::putInstalledPackageInfo(const char* identifier, const ReceiptsD
 {
 	CFDictionaryRef plist;
 	CFTypeRef keys[6], values[6];
-	char time[30];
-	struct tm tm;
 	CFDataRef plistData;
 	std::string path;
+	int fd, wr;
 	
 	mkdirs(RECEIPTS_DIR);
 	
@@ -146,15 +141,12 @@ void ReceiptsDb::putInstalledPackageInfo(const char* identifier, const ReceiptsD
 	keys[4] = CFSTR("PackageFileName");
 	keys[5] = CFSTR("InstallDate");
 	
-	localtime_r(&info.installDate, &tm);
-	strftime(time, sizeof(time), "%Y-%m-%dT%H:%M:%SZ", &tm);
-	
 	values[0] = string2cfstring(info.identifier.c_str());
 	values[1] = string2cfstring(info.version.c_str());
 	values[2] = string2cfstring(info.prefixPath.c_str());
 	values[3] = string2cfstring(info.installProcessName.c_str());
 	values[4] = string2cfstring(info.packageFileName.c_str());
-	values[5] = string2cfstring(time);
+	values[5] = CFDateCreate(nullptr, info.installDate);
 	
 	plist = CFDictionaryCreate(nullptr, keys, values, 6,
 			&kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
@@ -162,7 +154,6 @@ void ReceiptsDb::putInstalledPackageInfo(const char* identifier, const ReceiptsD
 	for (CFTypeRef v : values)
 		CFRelease(v);
 	
-	// TODO: save
 	plistData = CFPropertyListCreateData(nullptr, plist,
 			kCFPropertyListBinaryFormat_v1_0, 0, nullptr);
 	CFRelease(plist);
@@ -171,7 +162,28 @@ void ReceiptsDb::putInstalledPackageInfo(const char* identifier, const ReceiptsD
 		throw std::runtime_error("Cannot generate .plist");
 	
 	path = getReceiptsPath(identifier, ".plist");
+	fd = ::open(path.c_str(), O_WRONLY|O_CREAT|O_TRUNC, 0644);
 	
+	if (fd == -1)
+	{
+		std::stringstream ss;
+		ss << "Cannot write plist file: " << strerror(errno) << std::endl;
+		throw std::runtime_error(ss.str());
+	}
+	
+	wr = ::write(fd, CFDataGetBytePtr(plistData), CFDataGetLength(plistData));
+	CFRelease(plistData);
+	
+	if (wr == -1)
+	{
+		std::stringstream ss;
+		ss << "Cannot write plist file: " << strerror(errno) << std::endl;
+		
+		::close(fd);
+		throw std::runtime_error(ss.str());
+	}
+	
+	::close(fd);
 }
 
 static CFStringRef string2cfstring(const char* str)

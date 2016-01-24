@@ -16,6 +16,7 @@
 #include "DistributionXml.h"
 #include "PackageInfoXml.h"
 #include "ReceiptsDb.h"
+#include <CoreFoundation/CFDate.h>
 
 int installPackage(const char* pkg, const char* target)
 {
@@ -170,6 +171,7 @@ extractPayload(std::shared_ptr<XARArchive> xar,
 			rd = cpioFile->read(target, sizeof(target)-1, 0);
 			target[rd] = '\0';
 			
+			::unlink(path.c_str());
 			if (::symlink(target, path.c_str()) != 0)
 			{
 				std::stringstream ss;
@@ -182,6 +184,8 @@ extractPayload(std::shared_ptr<XARArchive> xar,
 			std::unique_ptr<char[]> buf(new char[4096]);
 			uint64_t length, done = 0;
 			int fd;
+			
+			::unlink(path.c_str());
 			
 			fd = ::open(path.c_str(), O_CREAT|O_WRONLY, st.st_mode);
 			if (fd == -1)
@@ -220,15 +224,30 @@ extractPayload(std::shared_ptr<XARArchive> xar,
 	}
 }
 
+static std::string concatPaths(std::string p1, std::string p2)
+{
+	std::string joined = p1 + "/" + p2;
+	size_t pos = 0;
+	
+	while ((pos = joined.find("//", pos)) != std::string::npos)
+	{
+		joined.replace(pos, 2, "/");
+	}
+	
+	return joined;
+}
+
 int installPayload(std::shared_ptr<XARArchive> xar, const char* subdir, const char* target)
 {
 	std::shared_ptr<PackageInfoXml> packageInfo;
+	std::string identifier;
 	
 	ReceiptsDb::InstalledPackageInfo installedPackageInfo;
 	
 	packageInfo = loadPackageInfo(xar, subdir);
+	identifier = packageInfo->identifier();
 	
-	std::cout << "installer: Installing package " << packageInfo->identifier()
+	std::cout << "installer: Installing package " << identifier
 			<< " version " << packageInfo->version()
 			<< " (" << packageInfo->installKBytes() << " KB)\n";
 	
@@ -244,6 +263,14 @@ int installPayload(std::shared_ptr<XARArchive> xar, const char* subdir, const ch
 	
 	// TODO: Copy BOM file
 	// TODO: Write a ReceiptsDb::InstalledPackageInfo
+	installedPackageInfo.identifier = identifier;
+	installedPackageInfo.installDate = CFAbsoluteTimeGetCurrent();
+	installedPackageInfo.installProcessName = "installer";
+	installedPackageInfo.packageFileName = subdir; // TODO: subdir is empty for "RAW" packages
+	installedPackageInfo.prefixPath = concatPaths(target, packageInfo->installLocation());
+	installedPackageInfo.version = packageInfo->version();
+	
+	ReceiptsDb::putInstalledPackageInfo(identifier.c_str(), installedPackageInfo);
 	
 	return 0;
 }

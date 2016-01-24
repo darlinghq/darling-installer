@@ -11,7 +11,7 @@ namespace ReceiptsDb
 	struct InstalledPackageInfo
 	{
 		std::string identifier, version, prefixPath;
-		time_t installDate; // (2016-01-21T10:53:33Z)
+		double installDate; // AbsoluteTime
 		std::string packageFileName, installProcessName;
 		// TODO: InstallDate (2016-01-21T10:53:33Z)
 		// TODO: PackageFileName (dos2unixinstall.pkg)
