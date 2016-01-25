@@ -55,15 +55,13 @@ static std::vector<std::string> split(const std::string &s, char delim)
 	return elems;
 }
 
-Reader* XARArchive::openFile(const std::string& path)
+std::string XARArchive::xpathForPath(const std::string& path)
 {
 	std::vector<std::string> parts = split(path, '/');
 	std::stringstream ss;
-	xmlXPathObjectPtr xpathObj;
-	Reader* retval = nullptr;
-
+	
 	if (parts.empty())
-		return nullptr;
+		return std::string();
 
 	ss << "/xar/toc";
 
@@ -73,10 +71,24 @@ Reader* XARArchive::openFile(const std::string& path)
 			ss << "/file[name='" << p << "']"; // TODO: escape file name
 	}
 	ss << "/data";
+	
+	return ss.str();
+}
 
+Reader* XARArchive::openFile(const std::string& path)
+{
+	xmlXPathObjectPtr xpathObj;
+	Reader* retval = nullptr;
+	std::string xpath;
+	
+	xpath = xpathForPath(path);
+	
+	if (xpath.empty())
+		return nullptr;
+	
 	m_context->node = nullptr;
 
-	xpathObj = xmlXPathEvalExpression((const xmlChar*) ss.str().c_str(), m_context);
+	xpathObj = xmlXPathEvalExpression((const xmlChar*) xpath.c_str(), m_context);
 	if (xpathObj->nodesetval)
 	{
 		retval = openFile(xpathObj->nodesetval);
@@ -84,6 +96,26 @@ Reader* XARArchive::openFile(const std::string& path)
 
 	xmlXPathFreeObject(xpathObj);
 	return retval;
+}
+
+bool XARArchive::containsFile(const std::string& path)
+{
+	std::string xpath;
+	xmlXPathObjectPtr xpathObj;
+	bool rv = false;
+
+	xpath = xpathForPath(path);
+	if (xpath.empty())
+		return false;
+
+	m_context->node = nullptr;
+
+	xpathObj = xmlXPathEvalExpression((const xmlChar*) xpath.c_str(), m_context);
+	if (xpathObj->nodesetval)
+		rv = true;
+
+	xmlXPathFreeObject(xpathObj);
+	return rv;
 }
 
 Reader* XARArchive::openFile(xmlNodeSetPtr nodes)

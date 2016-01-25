@@ -4,7 +4,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <sstream>
-#include "pkg/installer.h"
+#include "pkg/Installer.h"
 
 static void showHelp();
 static void showVersion();
@@ -109,8 +109,12 @@ int main_installer(int argc, char** argv)
 		{
 			if (target == nullptr)
 				throw std::runtime_error("Must specify -target");
-			return installPackage(pkg, target);
+			
+			Installer installer(pkg, target);
+			installer.installPackage();
 		}
+		
+		return 0;
 	}
 	catch (const std::exception& e)
 	{

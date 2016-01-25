@@ -23,8 +23,14 @@ public:
 	
 	size_t installKBytes() const;
 	
-	std::string preinstallScript() const;
-	std::string postinstallScript() const;
+	static const char* SCRIPT_PREFLIGHT;
+	static const char* SCRIPT_POSTFLIGHT;
+	static const char* SCRIPT_PREINSTALL;
+	static const char* SCRIPT_PREUPGRADE;
+	static const char* SCRIPT_POSTINSTALL;
+	static const char* SCRIPT_POSTUPGRADE;
+	
+	std::string script(const char* phase) const;
 private:
 	std::string xpathString(const char* xpath) const;
 private:

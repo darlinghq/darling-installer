@@ -30,6 +30,7 @@ include_directories(${DARLING_TOP_DIRECTORY}/src/external/foundation/Headers)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 include(darling_exe)
+include(InstallSymlink)
 
 add_darling_executable(installer
 	src/archive/FileReader.cpp
@@ -45,13 +46,16 @@ add_darling_executable(installer
         src/pkg/DistributionXml.cpp
         src/pkg/PackageInfoXml.cpp
         src/pkg/ReceiptsDb.cpp
-        src/pkg/installer.cpp
-	# src/main-test.cpp
+        src/pkg/Installer.cpp
+        src/pkg/Uninstaller.cpp
         src/main.cpp
         src/main-lsbom.cpp
         src/main-installer.cpp
+        src/main-uninstaller.cpp
 )
 
 target_link_libraries(installer z lzma bz2 xml2 cxx CFF)
 install(TARGETS installer RUNTIME DESTINATION libexec/darling/usr/bin)
 
+set(BINARY_PACKAGING_MODE ON)
+InstallSymlink(installer libexec/darling/usr/bin/uninstaller)

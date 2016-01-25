@@ -15,23 +15,30 @@ void BOMFilesBTree::listDirectory(uint32_t parentID, std::map<uint32_t, BOMPathE
 	
 	for (BOMBTreeNode& leaf : leaves)
 	{
-		// TODO: make this O(log n)
-		for (uint16_t i = 0; i < leaf.recordCount(); i++)
+		BOMBTreeNode::RecordIterator<BOMPathKey> it;
+		
+		it = std::lower_bound(leaf.begin<BOMPathKey>(), leaf.end<BOMPathKey>(), key.parentItemID,
+			[](const BOMPathKey* k, uint32_t v) {
+				return be(k->parentItemID) < be(v);
+		});
+		
+		while (it != leaf.end<BOMPathKey>())
 		{
 			BOMPathKey* lkey;
 			BOMLeafDescriptor* ldesc;
 			BOMPathRecord* ldata;
 			
-			lkey = leaf.getRecordKey<BOMPathKey>(i);
+			lkey = *it;
 			
 			if (lkey->parentItemID != key.parentItemID)
-				continue;
+				break;
 			
-			ldesc = leaf.getRecordData<BOMLeafDescriptor>(i);
+			ldesc = leaf.getRecordData<BOMLeafDescriptor>(it.index());
 			ldata = m_store->getBlockData<BOMPathRecord>(be(ldesc->recordID));
 			
 			// TODO: size64
 			contents[be(ldesc->itemID)] = BOMPathElement(lkey->name, ldata, 0);
+			++it;
 		}
 	}
 }

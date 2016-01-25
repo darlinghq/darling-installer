@@ -2,7 +2,7 @@
 #define RECEIPTSDB_H
 #include <string>
 #include <memory>
-#include <chrono>
+#include <set>
 #include "bom/BOMStore.h"
 
 namespace ReceiptsDb
@@ -13,16 +13,16 @@ namespace ReceiptsDb
 		std::string identifier, version, prefixPath;
 		double installDate; // AbsoluteTime
 		std::string packageFileName, installProcessName;
-		// TODO: InstallDate (2016-01-21T10:53:33Z)
-		// TODO: PackageFileName (dos2unixinstall.pkg)
-		// TODO: InstallProcessName (installer)
 	};
 	
 	bool getInstalledPackageInfo(const char* identifier, InstalledPackageInfo& info);
 	std::shared_ptr<BOMStore> getInstalledPackageBOM(const char* identifier);
 	
-	// TODO: install package info, install bom, ...
 	void putInstalledPackageInfo(const char* identifier, const InstalledPackageInfo& info);
+	std::string getInstalledPackageBOMPath(const char* identifier);
+	
+	std::set<std::string> getInstalledPackages();
+	void removePackage(const char* identifier);
 }
 
 #endif /* RECEIPTSDB_H */

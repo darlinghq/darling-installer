@@ -13,7 +13,9 @@ public:
 	virtual ~XARArchive();
 	virtual Reader* openFile(const std::string& path) override;
 	virtual std::vector<std::string> listFiles() override;
+	bool containsFile(const std::string& path);
 private:
+	std::string xpathForPath(const std::string& path);
 	Reader* openFile(xmlNodeSetPtr nodes);
 	static void decompressTOC(const char* in, size_t inLength, char* out, size_t outLength);
 	static int64_t extractXMLNumber(xmlXPathContextPtr context, const char* query);

@@ -1,5 +1,12 @@
 #include "PackageInfoXml.h"
 
+const char* PackageInfoXml::SCRIPT_PREFLIGHT = "preflight";
+const char* PackageInfoXml::SCRIPT_POSTFLIGHT = "postflight";
+const char* PackageInfoXml::SCRIPT_PREINSTALL = "preinstall";
+const char* PackageInfoXml::SCRIPT_PREUPGRADE = "preupgrade";
+const char* PackageInfoXml::SCRIPT_POSTINSTALL = "postinstall";
+const char* PackageInfoXml::SCRIPT_POSTUPGRADE = "postupgrade";
+
 PackageInfoXml::PackageInfoXml(std::shared_ptr<Reader> file)
 {
 	std::unique_ptr<char[]> contents;
@@ -49,14 +56,15 @@ size_t PackageInfoXml::installKBytes() const
 	return std::stoi(xpathString("string(/pkg-info/payload/@installKBytes)"));
 }
 
-std::string PackageInfoXml::preinstallScript() const
+std::string PackageInfoXml::script(const char* phase) const
 {
-	return xpathString("string(/pkg-info/scripts/preinstall/@file)");
-}
-
-std::string PackageInfoXml::postinstallScript() const
-{
-	return xpathString("string(/pkg-info/scripts/postinstall/@file)");
+	std::string xpath;
+	
+	xpath = "string(/pkg-info/scripts/";
+	xpath += phase;
+	xpath += "/@file)";
+	
+	return xpathString(xpath.c_str());
 }
 
 std::string PackageInfoXml::xpathString(const char* xpath) const

@@ -11,6 +11,7 @@
 #include <errno.h>
 #include <sys/types.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include "archive/FileReader.h"
 
 static std::string cfstring2stdstring(CFStringRef str);
@@ -202,3 +203,45 @@ std::string getReceiptsPath(const char* identifier, const char* ext)
 	
 	return path;
 }
+
+std::string ReceiptsDb::getInstalledPackageBOMPath(const char* identifier)
+{
+	return getReceiptsPath(identifier, ".bom");
+}
+
+std::set<std::string> ReceiptsDb::getInstalledPackages()
+{
+	std::set<std::string> rv;
+	DIR* d;
+	struct dirent* ent;
+	
+	d = opendir(RECEIPTS_DIR);
+	if (!d)
+		return rv;
+	
+	while ((ent = readdir(d)) != nullptr)
+	{
+		size_t len = strlen(ent->d_name);
+		
+		if (len > 6 && strcmp(ent->d_name + len - 6, ".plist") == 0)
+		{
+			ent->d_name[len - 6] = '\0';
+			rv.insert(ent->d_name);
+		}
+	}
+	
+	closedir(d);
+	return rv;
+}
+
+void ReceiptsDb::removePackage(const char* identifier)
+{
+	std::string path;
+	
+	path = getReceiptsPath(identifier, ".bom");
+	::unlink(path.c_str());
+	
+	path = getReceiptsPath(identifier, ".plist");
+	::unlink(path.c_str());
+}
+
