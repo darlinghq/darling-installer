@@ -272,7 +272,7 @@ void Installer::runInstallStepScript(const char* scriptName)
 	std::string script;
 	int exitCode;
 	
-	script = m_pkgInfo->script(PackageInfoXml::SCRIPT_PREFLIGHT);
+	script = m_pkgInfo->script(scriptName);
 		
 	if (!script.empty())
 	{
@@ -435,7 +435,7 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 	if (!pid)
 	{
 		const char* argv[5];
-		const char* envp[7];
+		const char* envp[8];
 		std::vector<std::string> env;
 		int err;
 		
@@ -448,8 +448,8 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 		// DSTROOT
 		// INSTALLER_TEMP
 		// TMPDIR
-		envp[5] = "COMMAND_LINE_INSTALL=1";
-		envp[6] = nullptr;
+		envp[6] = "COMMAND_LINE_INSTALL=1";
+		envp[7] = nullptr;
 		
 		env.push_back(std::string("PACKAGE_PATH=") + m_pkg);
 		envp[0] = env[0].c_str();
@@ -461,6 +461,8 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 		envp[3] = env[3].c_str();
 		env.push_back(std::string("TMPDIR=") + scriptTempDir);
 		envp[4] = env[4].c_str();
+		env.push_back(std::string("DPREFIX=") + getenv("DPREFIX"));
+		envp[5] = env[4].c_str();
 		
 		argv[0] = scriptName;
 		argv[1] = m_pkg;
@@ -487,7 +489,7 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 		
 		waitpid(pid, &status, 0);
 		
-		if (rd)
+		if (rd > 0)
 		{
 			// problem running the script
 			std::stringstream ss;

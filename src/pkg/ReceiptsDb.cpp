@@ -107,13 +107,13 @@ static void mkdirs(const char* dir)
 	if (::mkdir(dir, 0755) == 0 || errno == EEXIST)
 		return;
 	
-	while (true)
+	while (p != nullptr)
 	{
 		p = strchr(p, '/');
 		if (p == nullptr)
-			break;
-		
-		str.assign(dir, p-dir);
+			str = dir;
+		else
+			str.assign(dir, p-dir);
 		
 		if (::mkdir(str.c_str(), 0755) != 0)
 		{
@@ -121,6 +121,7 @@ static void mkdirs(const char* dir)
 				break;
 		}
 		
+		if (!p) break;
 		p++;
 	}
 }
