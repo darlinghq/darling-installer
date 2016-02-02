@@ -30,7 +30,7 @@ std::string DistributionXml::title() const
 	xmlXPathObjectPtr xpathObj;
 	std::string title;
 	
-	xpathObj = xmlXPathEvalExpression((const xmlChar*) "string(/installer-script/title/text())", m_context);
+	xpathObj = xmlXPathEvalExpression((const xmlChar*) "string(/*/title/text())", m_context);
 	if (xpathObj->stringval)
 		title = (char*) xpathObj->stringval;
 	
@@ -44,7 +44,7 @@ std::vector<DistributionXml::Choice> DistributionXml::choices() const
 	xmlXPathObjectPtr xpathObj;
 	
 	m_context->node = nullptr;
-	xpathObj = xmlXPathEvalExpression((const xmlChar*) "/installer-script/choice", m_context);
+	xpathObj = xmlXPathEvalExpression((const xmlChar*) "/*/choice", m_context);
 	
 	for (int i = 0; xpathObj->nodesetval != nullptr && i < xpathObj->nodesetval->nodeNr; i++)
 	{
@@ -98,7 +98,7 @@ bool DistributionXml::package(const std::string& id, DistributionXml::PkgRef& pk
 	xmlXPathObjectPtr xpathObj;
 	std::string xpath;
 	
-	xpath = "/installer-script/pkg-ref[@id='";
+	xpath = "//pkg-ref[@id='";
 	xpath += id;
 	xpath += "']";
 	

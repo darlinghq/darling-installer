@@ -435,7 +435,7 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 	if (!pid)
 	{
 		const char* argv[5];
-		const char* envp[8];
+		const char* envp[7];
 		std::vector<std::string> env;
 		int err;
 		
@@ -448,8 +448,8 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 		// DSTROOT
 		// INSTALLER_TEMP
 		// TMPDIR
-		envp[6] = "COMMAND_LINE_INSTALL=1";
-		envp[7] = nullptr;
+		envp[5] = "COMMAND_LINE_INSTALL=1";
+		envp[6] = nullptr;
 		
 		env.push_back(std::string("PACKAGE_PATH=") + m_pkg);
 		envp[0] = env[0].c_str();
@@ -461,8 +461,6 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 		envp[3] = env[3].c_str();
 		env.push_back(std::string("TMPDIR=") + scriptTempDir);
 		envp[4] = env[4].c_str();
-		env.push_back(std::string("DPREFIX=") + getenv("DPREFIX"));
-		envp[5] = env[4].c_str();
 		
 		argv[0] = scriptName;
 		argv[1] = m_pkg;
@@ -494,7 +492,11 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 			// problem running the script
 			std::stringstream ss;
 			ss << "Cannot run script: " << strerror(err);
-			throw std::runtime_error(ss.str());
+			
+			// Since we don't have /usr/bin/perl yet, we ignore errors like this one.
+			std::cerr << ss.str() << std::endl;
+			// throw std::runtime_error(ss.str());
+			return 0;
 		}
 		else
 		{
