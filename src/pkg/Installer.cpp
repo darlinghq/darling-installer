@@ -276,7 +276,7 @@ void Installer::runInstallStepScript(const char* scriptName)
 		
 	if (!script.empty())
 	{
-		exitCode = runScript(scriptName, m_scriptsDir.c_str(), m_installLocation.c_str());
+		exitCode = runScript(script.c_str(), m_scriptsDir.c_str(), m_installLocation.c_str());
 		if (exitCode != 0)
 			throwScriptExitCode(exitCode);
 	}
