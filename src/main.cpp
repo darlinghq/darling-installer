@@ -5,6 +5,7 @@ static const char* progname(const char* argv0);
 int main_lsbom(int argc, char** argv);
 int main_installer(int argc, char** argv);
 int main_uninstaller(int argc, char** argv);
+int main_pkgutil(int argc, char** argv);
 
 int main(int argc, char** argv)
 {
@@ -16,6 +17,8 @@ int main(int argc, char** argv)
 		return main_lsbom(argc, argv);
 	else if (strcmp(pname, "uninstaller") == 0)
 		return main_uninstaller(argc, argv);
+	else if (strcmp(pname, "pkgutil") == 0)
+		return main_pkgutil(argc, argv);
 	else
 		return main_installer(argc, argv);
 }

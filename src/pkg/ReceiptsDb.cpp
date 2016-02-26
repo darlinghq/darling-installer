@@ -62,6 +62,42 @@ bool ReceiptsDb::getInstalledPackageInfo(const char* identifier, ReceiptsDb::Ins
 	return true;
 }
 
+bool ReceiptsDb::getInstalledPackageInfo(const char* identifier, std::string& plistXml)
+{
+	std::string path;
+	std::unique_ptr<Reader> fileReader;
+	std::unique_ptr<UInt8[]> fileData;
+	CFDataRef data;
+	CFDictionaryRef plist;
+	
+	path = getReceiptsPath(identifier, ".plist");
+	
+	if (::access(path.c_str(), F_OK) != 0)
+		return false;
+	
+	fileReader.reset(new FileReader(path));
+	fileData.reset(new UInt8[fileReader->length()]);
+	
+	if (fileReader->read(fileData.get(), fileReader->length(), 0) != fileReader->length())
+		throw std::runtime_error("Short read in getInstalledPackageInfo()");
+	
+	data = CFDataCreate(nullptr, fileData.get(), fileReader->length());
+	fileData.reset(nullptr);
+	
+	plist = (CFDictionaryRef) CFPropertyListCreateWithData(nullptr, data,
+			kCFPropertyListImmutable, nullptr, nullptr);
+	CFRelease(data);
+	
+	data = CFPropertyListCreateData(nullptr, plist,
+			kCFPropertyListXMLFormat_v1_0, 0, nullptr);
+	CFRelease(plist);
+	
+	plistXml.assign((const char*) CFDataGetBytePtr(data), CFDataGetLength(data));
+	CFRelease(data);
+	
+	return true;
+}
+
 std::shared_ptr<BOMStore> ReceiptsDb::getInstalledPackageBOM(const char* identifier)
 {
 	std::shared_ptr<BOMStore> store;

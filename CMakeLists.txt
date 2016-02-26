@@ -52,6 +52,7 @@ add_darling_executable(installer
         src/main-lsbom.cpp
         src/main-installer.cpp
         src/main-uninstaller.cpp
+        src/main-pkgutil.cpp
 )
 
 target_link_libraries(installer z lzma bz2 xml2 cxx CFF)
@@ -59,3 +60,5 @@ install(TARGETS installer RUNTIME DESTINATION libexec/darling/usr/bin)
 
 set(BINARY_PACKAGING_MODE ON)
 InstallSymlink(installer libexec/darling/usr/bin/uninstaller)
+InstallSymlink(installer libexec/darling/usr/bin/pkgutil)
+

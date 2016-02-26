@@ -16,6 +16,7 @@ namespace ReceiptsDb
 	};
 	
 	bool getInstalledPackageInfo(const char* identifier, InstalledPackageInfo& info);
+	bool getInstalledPackageInfo(const char* identifier, std::string& plist);
 	std::shared_ptr<BOMStore> getInstalledPackageBOM(const char* identifier);
 	
 	void putInstalledPackageInfo(const char* identifier, const InstalledPackageInfo& info);
