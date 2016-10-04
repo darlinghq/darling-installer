@@ -50,7 +50,6 @@ BOMBTreeNode BOMBTree::traverseTree(uint32_t nodeIndex, const void* indexKey, Ke
 		case kBOMIndexNode:
 		{
 			int position;
-			BOMNodeRecordHeader* rh;
 
 			if (wildcard)
 			{
@@ -73,9 +72,7 @@ BOMBTreeNode BOMBTree::traverseTree(uint32_t nodeIndex, const void* indexKey, Ke
 				position = 0;
 			
 			// recurse down
-			rh = node.getRecordData<BOMNodeRecordHeader>(position);
-			
-			return traverseTree(be(rh->childID), indexKey, comp, wildcard);
+			return traverseTree(node.getRecordDataBlockId(position), indexKey, comp, wildcard);
 		}
 		case kBOMLeafNode:
 			return node;

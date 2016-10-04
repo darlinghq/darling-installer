@@ -50,6 +50,11 @@ public:
 		return m_store->getBlockData<DataType>(be(recordHeader(recordIndex)->childID));
 	}
 	
+	uint32_t getRecordDataBlockId(uint16_t recordIndex) const
+	{
+		return be(recordHeader(recordIndex)->childID);
+	}
+	
 	uint32_t forwardLink() const
 	{
 		return be(m_descriptor->fLink);
