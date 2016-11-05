@@ -15,6 +15,9 @@ PbzxReader::PbzxReader(std::shared_ptr<Reader> reader)
 	
 	m_lastFlags = be64toh(m_lastFlags);
 	m_compressedOffset = 12;
+	
+	if (lzma_stream_decoder(&m_strm, UINT64_MAX, LZMA_CONCATENATED) != LZMA_OK)
+		throw std::runtime_error("lzma init error");
 }
 
 PbzxReader::~PbzxReader()
