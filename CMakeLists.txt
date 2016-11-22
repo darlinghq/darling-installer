@@ -62,3 +62,4 @@ set(BINARY_PACKAGING_MODE ON)
 InstallSymlink(installer libexec/darling/usr/bin/uninstaller)
 InstallSymlink(installer libexec/darling/usr/bin/pkgutil)
 
+install(FILES installer.8 DESTINATION libexec/darling/usr/share/man/man8)
