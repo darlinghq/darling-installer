@@ -434,42 +434,20 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 	
 	if (!pid)
 	{
-		const char* argv[5];
-		const char* envp[7];
-		std::vector<std::string> env;
 		int err;
 		
 		close(pipes[0]);
 		fcntl(pipes[1], F_SETFD, FD_CLOEXEC);
-		
-		// COMMAND_LINE_INSTALL
-		// PACKAGE_PATH
-		// DSTVOLUME
-		// DSTROOT
-		// INSTALLER_TEMP
-		// TMPDIR
-		envp[5] = "COMMAND_LINE_INSTALL=1";
-		envp[6] = nullptr;
-		
-		env.push_back(std::string("PACKAGE_PATH=") + m_pkg);
-		envp[0] = env[0].c_str();
-		env.push_back(std::string("DSTVOLUME=") + m_target);
-		envp[1] = env[1].c_str();
-		env.push_back(std::string("DSTROOT=") + installLocation);
-		envp[2] = env[2].c_str();
-		env.push_back(std::string("INSTALLER_TEMP=") + scriptTempDir);
-		envp[3] = env[3].c_str();
-		env.push_back(std::string("TMPDIR=") + scriptTempDir);
-		envp[4] = env[4].c_str();
-		
-		argv[0] = scriptName;
-		argv[1] = m_pkg;
-		argv[2] = installLocation;
-		argv[3] = m_target;
-		argv[4] = nullptr;
-		
-		execve(scriptName, (char**) argv, (char**) envp);
-		
+
+		setenv("COMMAND_LINE_INSTALL", "1", 1);
+		setenv("PACKAGE_PATH", m_pkg, 1);
+		setenv("DSTVOLUME", m_target, 1);
+		setenv("DSTROOT", installLocation, 1);
+		setenv("INSTALLER_TEMP", scriptTempDir, 1);
+		setenv("TMPDIR", scriptTempDir, 1);
+
+		execl(scriptName, scriptName, m_pkg, installLocation, m_target, nullptr);
+
 		err = errno;
 		write(pipes[1], &err, sizeof(err));
 		_exit(err);
