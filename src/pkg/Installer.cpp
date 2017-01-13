@@ -288,7 +288,8 @@ int Installer::installPayload(const char* subdir)
 	char scriptsDir[] = "/tmp/installerXXXXXX";
 	ReceiptsDb::InstalledPackageInfo installedPackageInfo;
 	bool isUpgrade = false;
-	
+	Reader *bomReader;
+
 	m_subdir = subdir;
 	
 	m_pkgInfo = loadPackageInfo();
@@ -359,8 +360,13 @@ int Installer::installPayload(const char* subdir)
 	
 	// Copy BOM file
 	bomPath = ReceiptsDb::getInstalledPackageBOMPath(identifier.c_str());
-	extractFile(std::shared_ptr<Reader>(m_xar->openFile(getSubdirFilePath("Bom"))), bomPath.c_str());
-	
+	bomReader = m_xar->openFile(getSubdirFilePath("Bom"));
+	if (bomReader == nullptr)
+		bomReader = m_xar->openFile(getSubdirFilePath("BOM"));
+	if (bomReader == nullptr)
+		throw std::runtime_error("Cannot find bom file");
+	extractFile(std::shared_ptr<Reader>(bomReader), bomPath.c_str());
+
 	return 0;
 }
 
