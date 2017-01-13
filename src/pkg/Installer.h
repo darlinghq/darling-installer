@@ -2,6 +2,7 @@
 #define INSTALLER_H
 #include <memory>
 #include <string>
+#include <sys/types.h>
 #include "archive/XARArchive.h"
 #include "PackageInfoXml.h"
 #include "bom/BOMStore.h"
@@ -14,6 +15,7 @@ public:
 	void installPackage();
 private:
 	std::shared_ptr<PackageInfoXml> loadPackageInfo();
+	void mkParentDirs(const char *fileName, mode_t mode);
 	void extractPayload(const char* payloadFileName, std::string destinationDir);
 	int installPayload(const char* subdir = "");
 	std::string getSubdirFilePath(const char* fileName);

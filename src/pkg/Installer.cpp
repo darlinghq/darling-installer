@@ -2,6 +2,7 @@
 #include <stdexcept>
 #include <memory>
 #include <sys/stat.h>
+#include <sys/types.h>
 #include <fcntl.h>
 #include <iostream>
 #include <cstring>
@@ -138,6 +139,36 @@ std::string Installer::getInstallLocation()
 	return path;
 }
 
+void Installer::mkParentDirs(const char *fileName, mode_t mode)
+{
+	// Create directories so that it's possible to create the specified file,
+	// in a manner similiar to `mkdir -p`
+
+	char *path = strdup(fileName);
+
+	for (char *pos = path; pos != nullptr; pos = strchr(pos + 1, '/'))
+	{
+		if (pos == path)
+			continue;
+
+		*pos = '\0';
+
+		if (::mkdir(path, mode) != 0)
+		{
+			if (errno != EEXIST)
+			{
+				std::stringstream ss;
+				ss << "Cannot mkdir " << path << ": " << strerror(errno);
+				throw std::runtime_error(ss.str());
+			}
+		}
+
+		*pos = '/';
+	}
+
+	free(path);
+}
+
 void Installer::extractPayload(const char* payloadFileName, std::string destinationDir)
 {
 	std::string path, name;
@@ -170,7 +201,9 @@ void Installer::extractPayload(const char* payloadFileName, std::string destinat
 		path += name;
 		
 		// std::cout << path << std::endl;
-		
+
+		mkParentDirs(path.c_str(), st.st_mode & 0777);
+
 		if (S_ISDIR(st.st_mode))
 		{
 			if (::mkdir(path.c_str(), st.st_mode & 0777) != 0)
