@@ -395,8 +395,6 @@ int Installer::installPayload(const char* subdir)
 	bomPath = ReceiptsDb::getInstalledPackageBOMPath(identifier.c_str());
 	bomReader = m_xar->openFile(getSubdirFilePath("Bom"));
 	if (bomReader == nullptr)
-		bomReader = m_xar->openFile(getSubdirFilePath("BOM"));
-	if (bomReader == nullptr)
 		throw std::runtime_error("Cannot find bom file");
 	extractFile(std::shared_ptr<Reader>(bomReader), bomPath.c_str());
 
