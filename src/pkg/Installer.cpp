@@ -180,7 +180,10 @@ void Installer::extractPayload(const char* payloadFileName, std::string destinat
 	path = getSubdirFilePath(payloadFileName);
 	
 	cpioFile.reset(m_xar->openFile(path));
-	
+
+	if (!cpioFile)
+		throw std::runtime_error(path + " not found in .pkg");
+
 	if (GzipReader::isGzip(cpioFile))
 		cpioFile.reset(new GzipReader(cpioFile));
 	else if (PbzxReader::isPbzx(cpioFile))
@@ -321,7 +324,7 @@ int Installer::installPayload(const char* subdir)
 	char scriptsDir[] = "/tmp/installerXXXXXX";
 	ReceiptsDb::InstalledPackageInfo installedPackageInfo;
 	bool isUpgrade = false;
-	Reader *bomReader;
+	std::shared_ptr<Reader> bomFile;
 
 	m_subdir = subdir;
 	
@@ -393,10 +396,10 @@ int Installer::installPayload(const char* subdir)
 	
 	// Copy BOM file
 	bomPath = ReceiptsDb::getInstalledPackageBOMPath(identifier.c_str());
-	bomReader = m_xar->openFile(getSubdirFilePath("Bom"));
-	if (bomReader == nullptr)
-		throw std::runtime_error("Cannot find bom file");
-	extractFile(std::shared_ptr<Reader>(bomReader), bomPath.c_str());
+	bomFile.reset(m_xar->openFile(getSubdirFilePath("Bom")));
+	if (!bomFile)
+		throw std::runtime_error(getSubdirFilePath("Bom") + " not found in .pkg");
+	extractFile(bomFile, bomPath.c_str());
 
 	return 0;
 }
