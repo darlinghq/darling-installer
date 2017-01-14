@@ -7,6 +7,8 @@
 #include "be.h"
 #include <iostream>
 #include <sstream>
+#include <algorithm>
+#include <string>
 #include "ArchivedFileReader.h"
 
 XARArchive::XARArchive(std::shared_ptr<Reader> reader)
@@ -65,10 +67,15 @@ std::string XARArchive::xpathForPath(const std::string& path)
 
 	ss << "/xar/toc";
 
-	for (const std::string& p : parts)
+	for (std::string p : parts)
 	{
-		if (!p.empty())
-			ss << "/file[name='" << p << "']"; // TODO: escape file name
+		if (p.empty())
+			continue;
+
+		// libxml2 only supports XPath 1.0
+		std::transform(p.begin(), p.end(), p.begin(), ::tolower);
+		// TODO: escape file name
+		ss << "/file[translate(name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')='" << p << "']";
 	}
 	ss << "/data";
 	
