@@ -509,7 +509,7 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 		{
 			// problem running the script
 			std::stringstream ss;
-			ss << "Cannot run script: " << strerror(err);
+			ss << "Cannot run script " << scriptName << ": " << strerror(err);
 			
 			// Since we don't have /usr/bin/perl yet, we ignore errors like this one.
 			std::cerr << ss.str() << std::endl;
