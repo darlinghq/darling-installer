@@ -13,7 +13,7 @@ public:
 	
 	static bool isPbzx(std::shared_ptr<Reader> reader);
 private:
-	lzma_stream m_strm = LZMA_STREAM_INIT;
+	lzma_stream* m_strm;
 	uint64_t m_remainingRunLength = 0, m_lastFlags;
 };
 
