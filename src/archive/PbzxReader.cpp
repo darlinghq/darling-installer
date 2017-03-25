@@ -16,16 +16,13 @@ PbzxReader::PbzxReader(std::shared_ptr<Reader> reader)
 	m_lastFlags = be64toh(m_lastFlags);
 	m_compressedOffset = 12;
 	
-	m_strm = new lzma_stream;
-	memset(m_strm, 0, sizeof(*m_strm));
-
-	if (lzma_stream_decoder(m_strm, UINT64_MAX, LZMA_CONCATENATED) != LZMA_OK)
+	if (lzma_stream_decoder(&m_strm, UINT64_MAX, LZMA_CONCATENATED) != LZMA_OK)
 		throw std::runtime_error("lzma init error");
 }
 
 PbzxReader::~PbzxReader()
 {
-	lzma_end(m_strm);
+	lzma_end(&m_strm);
 }
 
 bool PbzxReader::isPbzx(std::shared_ptr<Reader> reader)
@@ -47,14 +44,14 @@ int32_t PbzxReader::read(void* buf, int32_t count, uint64_t offset)
 	
 	uint32_t done = 0;
 
-	m_strm->next_out = static_cast<uint8_t*>(buf);
-	m_strm->avail_out = count;
+	m_strm.next_out = static_cast<uint8_t*>(buf);
+	m_strm.avail_out = count;
 
-	while (m_strm->avail_out > 0)
+	while (m_strm.avail_out > 0)
 	{
 		int status;
 		
-		if (!m_strm->avail_in)
+		if (!m_strm.avail_in)
 		{
 			if (!m_remainingRunLength)
 			{
@@ -82,16 +79,16 @@ int32_t PbzxReader::read(void* buf, int32_t count, uint64_t offset)
 			m_compressedOffset += rd;
 			m_remainingRunLength -= rd;
 			
-			m_strm->next_in = reinterpret_cast<const uint8_t*>(m_buffer);
-			m_strm->avail_in = rd;
+			m_strm.next_in = reinterpret_cast<const uint8_t*>(m_buffer);
+			m_strm.avail_in = rd;
 		}
 		
-		status = lzma_code(m_strm, LZMA_RUN);
+		status = lzma_code(&m_strm, LZMA_RUN);
 		if (status != LZMA_OK)
 			throw std::runtime_error("lzma decompression error");
 	}
 	
-	done = count - m_strm->avail_out;
+	done = count - m_strm.avail_out;
 	m_lastReadEnd += done;
 	
 	return done;
