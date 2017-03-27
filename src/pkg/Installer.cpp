@@ -410,7 +410,7 @@ const char* Installer::getPackageName()
 		return m_subdir;
 	else
 	{
-		char* p;
+		const char* p;
 		
 		p = strrchr(m_pkg, '/');
 		if (p != nullptr)
