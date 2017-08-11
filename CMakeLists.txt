@@ -52,7 +52,7 @@ add_darling_executable(installer
 	src/main-pkgutil.cpp
 )
 
-target_link_libraries(installer z lzma bz2 xml2 cxx CoreFoundation)
+target_link_libraries(installer z lzma bz2 xml2 cxx ${CoreFoundation})
 install(TARGETS installer RUNTIME DESTINATION libexec/darling/usr/bin)
 
 set(BINARY_PACKAGING_MODE ON)
