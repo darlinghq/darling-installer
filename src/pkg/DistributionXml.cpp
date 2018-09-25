@@ -58,8 +58,7 @@ std::vector<DistributionXml::Choice> DistributionXml::choices() const
 			continue;
 
 		attrVal = xmlGetProp(node, (xmlChar*) "title");
-		if (!attrVal) throw std::runtime_error("Element <choice> lacks 'title' attributte");
-		choice.title = (char*) attrVal;
+		if (attrVal) choice.title = (char*) attrVal;
 
 		attrVal = xmlGetProp(node, (xmlChar*) "id");
 		if (!attrVal) throw std::runtime_error("Element <choice> lacks 'id' attributte");

@@ -71,7 +71,12 @@ void Installer::installPackage()
 			if (!c.selected)
 				continue;
 			
-			std::cout << "installer: Installing selected choice " << c.title << std::endl;
+			std::string choiceTitle = c.title;
+			// Fallback to using id as a replacement for title
+			if (choiceTitle.empty())
+				choiceTitle = c.id;
+			
+			std::cout << "installer: Installing selected choice " << choiceTitle << std::endl;
 			
 			for (const std::string& pkgId : c.pkgref)
 			{
