@@ -126,7 +126,7 @@ bool DistributionXml::package(const std::string& id, DistributionXml::PkgRef& pk
 		if (attrVal != nullptr)
 			pkg.installKbytes = atoi((char*) attrVal);
 
-		if (pkg.path.empty() && node->children && node->children->type == XML_TEXT_NODE)
+		if (pkg.path.empty() && node->children && node->children->type == XML_TEXT_NODE && !xmlIsBlankNode(node->children))
 			pkg.path = (char*) node->children->content;
 	}
 	
