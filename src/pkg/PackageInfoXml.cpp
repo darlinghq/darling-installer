@@ -53,7 +53,10 @@ bool PackageInfoXml::relocatable() const
 	
 size_t PackageInfoXml::installKBytes() const
 {
-	return std::stoi(xpathString("string(/pkg-info/payload/@installKBytes)"));
+	std::string v = xpathString("string(/pkg-info/payload/@installKBytes)");
+	if (!v.empty())
+		return std::stoi(v);
+	return 0;
 }
 
 std::string PackageInfoXml::script(const char* phase) const

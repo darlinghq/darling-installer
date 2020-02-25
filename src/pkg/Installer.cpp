@@ -187,7 +187,7 @@ void Installer::extractPayload(const char* payloadFileName, std::string destinat
 	cpioFile.reset(m_xar->openFile(path));
 
 	if (!cpioFile)
-		throw std::runtime_error(path + " not found in .pkg");
+		return; // Not an error - packages don't need to have a Payload
 
 	if (GzipReader::isGzip(cpioFile))
 		cpioFile.reset(new GzipReader(cpioFile));
