@@ -13,6 +13,7 @@ public:
 	Installer(const char* pkg, const char* target);
 	
 	void installPackage();
+	void enableVerboseR() { m_verboseR = true; }
 private:
 	std::shared_ptr<PackageInfoXml> loadPackageInfo();
 	void mkParentDirs(const char *fileName, mode_t mode);
@@ -40,6 +41,8 @@ private:
 	const char* m_subdir;
 	std::shared_ptr<PackageInfoXml> m_pkgInfo;
 	std::string m_scriptsDir, m_installLocation;
+
+	bool m_verboseR = false;
 };
 
 #endif /* INSTALLER_H */

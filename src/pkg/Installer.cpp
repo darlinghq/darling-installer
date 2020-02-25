@@ -64,6 +64,7 @@ void Installer::installPackage()
 		distribution.reset(new DistributionXml(distributionFile));
 		
 		std::cout << "installer: Package name is " << distribution->title() << std::endl;
+		std::cout << "installer: Installing at base path " << m_target << std::endl;
 		
 		choices = distribution->choices();
 		for (const DistributionXml::Choice& c : choices)
@@ -340,6 +341,12 @@ int Installer::installPayload(const char* subdir)
 	std::cout << "installer: Installing package " << identifier
 			<< " version " << m_pkgInfo->version()
 			<< " (" << m_pkgInfo->installKBytes() << " KB)\n";
+
+	if (m_verboseR)
+	{
+		std::cout << "installer:PHASE:Installing package...\n";
+		std::cout << "installer:%10.0\n";
+	}
 	
 	if (m_xar->containsFile(getSubdirFilePath("Scripts")))
 	{
@@ -353,6 +360,12 @@ int Installer::installPayload(const char* subdir)
 		
 		// TODO: InstallationCheck and VolumeCheck scripts
 		// http://s.sudre.free.fr/Stuff/PackageMaker_Howto.html
+
+		if (m_verboseR)
+		{
+			std::cout << "installer:PHASE:Running installer actions (preflight)...\n";
+			std::cout << "installer:%20.0\n";
+		}
 		
 		runInstallStepScript(PackageInfoXml::SCRIPT_PREFLIGHT);
 	}
@@ -363,6 +376,8 @@ int Installer::installPayload(const char* subdir)
 	{
 		std::cout << "installer: Uninstalling previous version "
 				<< installedPackageInfo.version << std::endl;
+		if (m_verboseR)
+			std::cout << "installer:PHASE:Uninstalling previous version...\n";
 		
 		// uninstall
 		uninstall(ReceiptsDb::getInstalledPackageBOM(m_pkgInfo->identifier().c_str()),
@@ -371,22 +386,42 @@ int Installer::installPayload(const char* subdir)
 	}
 	
 	if (scriptsDir[0] != 0)
-	{	
+	{
+		if (m_verboseR)
+			std::cout << "installer:PHASE:Running installer actions (preinstall)...\n";
+
 		// run preinstall script
 		runInstallStepScript(isUpgrade ? PackageInfoXml::SCRIPT_PREUPGRADE : PackageInfoXml::SCRIPT_PREINSTALL);
 	}
 
 	std::cout << "installer: Extracting files\n";
+	if (m_verboseR)
+	{
+		std::cout << "installer:PHASE:Extracting files...\n";
+		std::cout << "installer:%50.0\n";
+	}
 	extractPayload("Payload", getInstallLocation());
 	
 	if (scriptsDir[0] != 0)
 	{
+		if (m_verboseR)
+		{
+			std::cout << "installer:PHASE:Running installer actions (postinstall)...\n";
+			std::cout << "installer:%80.0\n";
+		}
+
 		// run postinstall script
 		runInstallStepScript(isUpgrade ? PackageInfoXml::SCRIPT_POSTUPGRADE : PackageInfoXml::SCRIPT_POSTINSTALL);
 		runInstallStepScript(PackageInfoXml::SCRIPT_POSTFLIGHT);
 		
 		// cleanup
 		removeDirectory(scriptsDir);
+	}
+
+	if (m_verboseR)
+	{
+		std::cout << "installer:PHASE:Finishing the installation...\n";
+		std::cout << "installer:%90.0\n";
 	}
 	
 	// Write a plist about installed package
@@ -402,9 +437,14 @@ int Installer::installPayload(const char* subdir)
 	// Copy BOM file
 	bomPath = ReceiptsDb::getInstalledPackageBOMPath(identifier.c_str());
 	bomFile.reset(m_xar->openFile(getSubdirFilePath("Bom")));
-	if (!bomFile)
-		throw std::runtime_error(getSubdirFilePath("Bom") + " not found in .pkg");
-	extractFile(bomFile, bomPath.c_str());
+	if (bomFile)
+		extractFile(bomFile, bomPath.c_str());
+
+	if (m_verboseR)
+	{
+		std::cout << "installer:PHASE:The software was successfully installed.\n";
+		std::cout << "installer:%100.0\n";
+	}
 
 	return 0;
 }

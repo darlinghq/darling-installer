@@ -15,6 +15,7 @@ int main_installer(int argc, char** argv)
 	const char* target = nullptr;
 	const char* file = nullptr;
 	bool volinfo = false, dominfo = false, pkginfo = false;
+	bool verboseR = false;
 	
 	struct option installer_options[] = {
 		{ "pkg", required_argument, 0, 0},
@@ -27,6 +28,7 @@ int main_installer(int argc, char** argv)
 		{ "target", required_argument, 0, 0},
 		{ "file", required_argument, 0, 0},
 		{ "help", no_argument, 0, 0},
+		{ "verboseR", no_argument, 0, 0},
 		{ nullptr, 0, 0, 0}
 	};
 	
@@ -75,6 +77,9 @@ int main_installer(int argc, char** argv)
 				case 9:
 					showHelp();
 					break;
+				case 10:
+					verboseR = true;
+					break;
 			}
 		}
 		
@@ -111,6 +116,10 @@ int main_installer(int argc, char** argv)
 				throw std::runtime_error("Must specify -target");
 			
 			Installer installer(pkg, target);
+			
+			if (verboseR)
+				installer.enableVerboseR();
+
 			installer.installPackage();
 		}
 		
