@@ -13,7 +13,10 @@ Uninstaller::Uninstaller(const char* package)
 		throw std::runtime_error("No such package is installed");
 	
 	m_prefix = installedPackageInfo.prefixPath;
-	m_tree = ReceiptsDb::getInstalledPackageBOM(package)->getFilesTree();
+
+	auto bom = ReceiptsDb::getInstalledPackageBOM(package);
+	if (bom)
+		m_tree = bom->getFilesTree();
 }
 
 Uninstaller::Uninstaller(std::shared_ptr<BOMStore> bom, const char* prefix)
@@ -28,6 +31,9 @@ void Uninstaller::uninstall()
 
 void Uninstaller::uninstall(uint32_t parentID, std::string path)
 {
+	if (!m_tree)
+		return;
+		
 	// Walk the BOM tree and remove files
 	std::map<uint32_t, BOMPathElement> files;
 	const size_t pathLen = path.length();

@@ -380,8 +380,12 @@ int Installer::installPayload(const char* subdir)
 			std::cout << "installer:PHASE:Uninstalling previous version...\n";
 		
 		// uninstall
-		uninstall(ReceiptsDb::getInstalledPackageBOM(m_pkgInfo->identifier().c_str()),
-				installedPackageInfo.prefixPath.c_str());
+		auto bom = ReceiptsDb::getInstalledPackageBOM(m_pkgInfo->identifier().c_str());
+		if (bom)
+		{
+			uninstall(bom,
+					installedPackageInfo.prefixPath.c_str());
+		}
 		isUpgrade = true;
 	}
 	
