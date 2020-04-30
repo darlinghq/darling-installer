@@ -88,7 +88,7 @@ int main_installer(int argc, char** argv)
 		
 		if (pkg == nullptr)
 			throw std::runtime_error("-package argument is required");
-		if (int(volinfo) + int(dominfo) + int(pkginfo) > 0)
+		if (int(volinfo) + int(dominfo) + int(pkginfo) > 1)
 			throw std::runtime_error("Cannot specify -volinfo, -dominfo or -pkginfo at the same time");
 		
 		if (volinfo)
