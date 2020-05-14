@@ -10,19 +10,8 @@ SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fPIC -nostdinc -nostdinc++ -std=c++11")
 
 add_definitions(-DRECEIPTS_DIR="/private/var/db/receipts")
 
-include_directories(BEFORE ${CMAKE_SOURCE_DIR}/src/external/libcxx/include)
 include_directories(
-	${CMAKE_SOURCE_DIR}/src/external/libxml2/include
-	${CMAKE_BINARY_DIR}/src/external/libxml2/include
-	${CMAKE_SOURCE_DIR}/src/external/zlib
-	${CMAKE_SOURCE_DIR}/src/external/bzip2
-	${CMAKE_SOURCE_DIR}/src/libc/fbsdcompat
-	${CMAKE_SOURCE_DIR}/src/libc/include/FreeBSD
-	${CMAKE_SOURCE_DIR}/src/external/liblzma/src/liblzma/api
 	${CMAKE_SOURCE_DIR}/src/external/icu/icuSources/common
-	${CMAKE_SOURCE_DIR}/src/external/corefoundation
-	${CMAKE_SOURCE_DIR}/src/external/foundation/include
-	${CMAKE_SOURCE_DIR}/src/external/libclosure
 	${CMAKE_CURRENT_SOURCE_DIR}/src
 )
 
