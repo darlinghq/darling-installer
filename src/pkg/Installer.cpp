@@ -90,7 +90,10 @@ void Installer::installPackage()
 					throw std::runtime_error(ss.str());
 				}
 				
-				installPayload(pkgref.path.c_str() + 1);
+				const char* path = pkgref.path.c_str();
+				if (*path == '#')
+					path++;
+				installPayload(path);
 			}
 		}
 	}
