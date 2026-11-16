@@ -5,6 +5,7 @@
 #include <libxml/parser.h>
 #include <libxml/xpath.h>
 #include <vector>
+#include <map>
 #include <string>
 
 class DistributionXml
@@ -22,9 +23,12 @@ public:
 		bool visible = true;
 		std::string id, title;
 		std::vector<std::string> pkgref;
-		// Attributes holding a JavaScript expression, which is not evaluated;
-		// the choice keeps the documented default (selected) for these.
+		// Attributes (selected, enabled, visible) holding a JavaScript expression:
+		// the expression, and the names of those not (yet) evaluated, for which the
+		// choice keeps the documented default (true).
+		std::map<std::string, std::string> expressions;
 		std::vector<std::string> unevaluated;
+		std::map<std::string, std::string> evalErrors; // attribute -> why its script failed
 	};
 	struct PkgRef
 	{
@@ -32,10 +36,17 @@ public:
 		std::string path;
 		bool active = true; // false: not installed even if its choice is selected
 		bool activeUnevaluated = false; // "active" is a JavaScript expression
+		std::string activeExpression;
 	};
 	
 	// Domains the package enables: LocalSystem, CurrentUserHomeDirectory
 	std::vector<std::string> domains() const;
+	
+	// Text of the <script> elements, which define functions for the expressions
+	std::vector<std::string> scripts() const;
+	// The script expression of <installation-check> and <volume-check>; empty if absent
+	std::string installationCheck() const;
+	std::string volumeCheck() const;
 	std::vector<Choice> choices() const;
 	
 	// The <choices-outline> tree: each line names a choice, child lines are its subchoices

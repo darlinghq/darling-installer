@@ -31,6 +31,7 @@ add_darling_executable(installer
 	src/bom/BOMFilesBTree.cpp
 	src/pkg/DistributionXml.mm
 	src/pkg/ChoicesXml.mm
+	src/pkg/ChoiceScript.mm
 	src/pkg/PackageInfoXml.cpp
 	src/pkg/ReceiptsDb.cpp
 	src/pkg/Installer.cpp

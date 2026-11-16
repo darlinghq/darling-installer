@@ -66,6 +66,143 @@ void Installer::loadChoices()
 	
 	m_distribution = std::make_shared<DistributionXml>(distributionFile);
 	m_choices = m_distribution->choices();
+	evaluateChoiceExpressions();
+}
+
+// The script context of the Distribution; null if JavaScriptCore is not available
+ChoiceScript* Installer::script()
+{
+	if (!m_scriptTried)
+	{
+		m_scriptTried = true;
+		m_script = ChoiceScript::create(m_target.empty() ? "/" : m_target);
+		
+		if (m_script && m_distribution)
+		{
+			for (const std::string& source : m_distribution->scripts())
+			{
+				std::string error;
+				if (!m_script->addScript(source, error))
+					std::cerr << "installer: Warning: a <script> of the package failed: " << error << std::endl;
+			}
+		}
+	}
+	return m_script.get();
+}
+
+// Evaluates the JavaScript expressions of selected/enabled/visible. A choice can
+// refer to other choices, so evaluate until the states settle.
+void Installer::evaluateChoiceExpressions()
+{
+	bool any = false;
+	for (const DistributionXml::Choice& c : m_choices)
+		any = any || !c.expressions.empty();
+	
+	ChoiceScript* js = any ? script() : nullptr;
+	if (js == nullptr)
+		return;
+	
+	for (int pass = 0; pass < 5; pass++)
+	{
+		std::vector<ChoiceScript::ChoiceState> states;
+		bool changed = false;
+		
+		for (const DistributionXml::Choice& c : m_choices)
+			states.push_back({ c.id, c.selected, c.enabled, c.visible });
+		js->setChoices(states);
+		
+		for (DistributionXml::Choice& c : m_choices)
+		{
+			for (const auto& e : c.expressions)
+			{
+				bool value, *field = e.first == "selected" ? &c.selected : (e.first == "enabled" ? &c.enabled : &c.visible);
+				std::string error;
+				
+				if (!js->evaluate(e.second, value, error))
+				{
+					c.evalErrors[e.first] = error;
+					continue;
+				}
+				c.evalErrors.erase(e.first);
+				if (*field != value)
+				{
+					*field = value;
+					changed = true;
+				}
+			}
+		}
+		if (!changed)
+			break;
+	}
+	
+	// what could not be evaluated keeps its default
+	for (DistributionXml::Choice& c : m_choices)
+	{
+		c.unevaluated.clear();
+		for (const auto& e : c.evalErrors)
+			c.unevaluated.push_back(e.first);
+	}
+}
+
+bool Installer::isPackageActive(const std::string& pkgId, const DistributionXml::PkgRef& ref)
+{
+	if (ref.activeExpression.empty())
+		return ref.active;
+	
+	ChoiceScript* js = script();
+	std::string error;
+	bool value;
+	
+	if (js != nullptr)
+	{
+		std::vector<ChoiceScript::ChoiceState> states;
+		for (const DistributionXml::Choice& c : m_choices)
+			states.push_back({ c.id, c.selected, c.enabled, c.visible });
+		js->setChoices(states);
+		
+		if (js->evaluate(ref.activeExpression, value, error))
+			return value && ref.active;
+	}
+	std::cout << "installer: Warning: package " << pkgId << ": the JavaScript in 'active' is not evaluated"
+			<< (error.empty() ? " (JavaScriptCore is not available)" : " (" + error + ")") << "; treating the package as active\n";
+	return ref.active;
+}
+
+// <installation-check> and <volume-check>: a script returning false stops the
+// installation, unless it sets my.result.type to Warning.
+void Installer::runChecks()
+{
+	if (!m_distribution)
+		return;
+	
+	const std::pair<const char*, std::string> checks[] = {
+		{ "installation-check", m_distribution->installationCheck() },
+		{ "volume-check", m_distribution->volumeCheck() },
+	};
+	for (const auto& check : checks)
+	{
+		if (check.second.empty())
+			continue;
+		
+		ChoiceScript* js = script();
+		std::string error;
+		bool passed;
+		
+		if (js == nullptr || !js->evaluate(check.second, passed, error))
+		{
+			std::cout << "installer: Warning: the " << check.first << " script is not evaluated"
+					<< (error.empty() ? " (JavaScriptCore is not available)" : " (" + error + ")") << "; continuing\n";
+			continue;
+		}
+		if (passed)
+			continue;
+		
+		std::string message = js->resultMessage();
+		if (js->resultType() == "Warning")
+			std::cout << "installer: Warning: " << message << "\n";
+		else
+			throw std::runtime_error(message.empty() ? std::string("The ") + check.first + " of the package failed" : message);
+	}
 }
 
 void Installer::applyChoiceChanges(const std::vector<ChoiceChange>& changes)
@@ -177,7 +314,7 @@ int Installer::selectionState(const std::vector<DistributionXml::Line>& lines) c
 
 void Installer::printChoice(std::ostream& out, int depth, const std::string& id, const std::string& title,
 		bool enabled, bool visible, int selected, size_t kbytes, const std::vector<std::string>& packages,
-		const std::vector<DistributionXml::Line>& children) const
+		const std::vector<DistributionXml::Line>& children)
 {
 	indent(out, depth); out << "<dict>\n";
 	indent(out, depth + 1); out << "<key>childItems</key>\n";
@@ -221,7 +358,7 @@ void Installer::printChoice(std::ostream& out, int depth, const std::string& id,
 	indent(out, depth); out << "</dict>\n";
 }
 
-void Installer::printLine(std::ostream& out, int depth, const DistributionXml::Line& line) const
+void Installer::printLine(std::ostream& out, int depth, const DistributionXml::Line& line)
 {
 	const DistributionXml::Choice* c = findChoice(line.choice);
 	std::vector<std::string> packages;
@@ -238,7 +375,7 @@ void Installer::printLine(std::ostream& out, int depth, const DistributionXml::L
 	{
 		DistributionXml::PkgRef ref;
 		
-		if (!m_distribution->package(pkgId, ref) || !ref.active)
+		if (!m_distribution->package(pkgId, ref) || !isPackageActive(pkgId, ref))
 			continue;
 		
 		std::string sub = ref.path;
@@ -365,7 +502,7 @@ std::vector<Installer::PackageSummary> Installer::packageSummaries()
 			
 			if (!m_distribution->package(pkgId, ref))
 				throw std::runtime_error("Cannot find <pkg-ref> with id '" + pkgId + "'");
-			if (!ref.active)
+			if (!isPackageActive(pkgId, ref))
 				continue;
 			
 			subdir = ref.path;
@@ -393,6 +530,8 @@ void Installer::installPackage()
 	{
 		const std::shared_ptr<DistributionXml>& distribution = m_distribution;
 		
+		runChecks();
+		
 		std::cout << "installer: Package name is " << distribution->title() << std::endl;
 		std::cout << "installer: Installing at base path " << m_target << std::endl;
 		
@@ -410,8 +549,10 @@ void Installer::installPackage()
 			{
 				if (attr.find("selected") == std::string::npos)
 					continue; // enabled/visible only matter to a user interface
+				auto err = c.evalErrors.find(attr);
 				std::cout << "installer: Warning: choice " << choiceTitle << ": the JavaScript in '" << attr
-						<< "' is not evaluated; treating the choice as selected\n";
+						<< "' is not evaluated" << (err == c.evalErrors.end() ? " (JavaScriptCore is not available)" : " (" + err->second + ")")
+						<< "; treating the choice as selected\n";
 			}
 			
 			std::cout << "installer: Installing selected choice " << choiceTitle << std::endl;
@@ -427,12 +568,7 @@ void Installer::installPackage()
 					throw std::runtime_error(ss.str());
 				}
 				
-				if (pkgref.activeUnevaluated)
-				{
-					std::cout << "installer: Warning: package " << pkgId
-							<< ": the JavaScript in 'active' is not evaluated; treating the package as active\n";
-				}
-				if (!pkgref.active)
+				if (!isPackageActive(pkgId, pkgref))
 					continue;
 				
 				const char* path = pkgref.path.c_str();

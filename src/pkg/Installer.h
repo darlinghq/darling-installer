@@ -10,6 +10,7 @@
 #include "bom/BOMStore.h"
 #include "DistributionXml.h"
 #include "ChoicesXml.h"
+#include "ChoiceScript.h"
 #include <iosfwd>
 
 class Installer
@@ -38,13 +39,17 @@ public:
 	void enableVerboseR() { m_verboseR = true; }
 private:
 	void loadChoices();
+	ChoiceScript* script();
+	void evaluateChoiceExpressions();
+	bool isPackageActive(const std::string& pkgId, const DistributionXml::PkgRef& ref);
+	void runChecks();
 	const DistributionXml::Choice* findChoice(const std::string& id) const;
 	int selectionState(const DistributionXml::Line& line) const;
 	int selectionState(const std::vector<DistributionXml::Line>& lines) const;
-	void printLine(std::ostream& out, int depth, const DistributionXml::Line& line) const;
+	void printLine(std::ostream& out, int depth, const DistributionXml::Line& line);
 	void printChoice(std::ostream& out, int depth, const std::string& id, const std::string& title,
 			bool enabled, bool visible, int selected, size_t kbytes, const std::vector<std::string>& packages,
-			const std::vector<DistributionXml::Line>& children) const;
+			const std::vector<DistributionXml::Line>& children);
 	std::shared_ptr<PackageInfoXml> loadPackageInfo();
 	void mkParentDirs(const char *fileName, mode_t mode);
 	void extractPayload(const char* payloadFileName, std::string destinationDir);
@@ -79,6 +84,8 @@ private:
 	bool m_choicesLoaded = false;
 	std::shared_ptr<DistributionXml> m_distribution; // null for a package without Distribution
 	std::vector<DistributionXml::Choice> m_choices;
+	std::unique_ptr<ChoiceScript> m_script; // null without JavaScriptCore
+	bool m_scriptTried = false;
 };
 
 #endif /* INSTALLER_H */

@@ -54,7 +54,7 @@ static bool parseBoolean(const char* text, bool& value)
 	return false;
 }
 
-static bool initialState(xmlNodePtr node, const char* name, std::vector<std::string>& unevaluated)
+static bool initialState(xmlNodePtr node, const char* name, DistributionXml::Choice& choice)
 {
 	std::string start = std::string("start_") + name;
 	bool value;
@@ -66,10 +66,15 @@ static bool initialState(xmlNodePtr node, const char* name, std::vector<std::str
 			continue;
 		
 		bool literal = parseBoolean((char*) text, value);
-		xmlFree(text);
 		if (literal)
+		{
+			xmlFree(text);
 			return value;
-		unevaluated.push_back(attr);
+		}
+		choice.unevaluated.push_back(attr);
+		if (attr == name) // start_X is a plain boolean, only X holds an expression
+			choice.expressions[attr] = (char*) text;
+		xmlFree(text);
 		break;
 	}
 	return true;
@@ -127,9 +132,9 @@ std::vector<DistributionXml::Choice> DistributionXml::choices() const
 		
 		// Initial state: start_X (a plain boolean) if given, otherwise the
 		// attribute X when it is a literal boolean; the default is true.
-		choice.selected = initialState(node, "selected", choice.unevaluated);
-		choice.enabled = initialState(node, "enabled", choice.unevaluated);
-		choice.visible = initialState(node, "visible", choice.unevaluated);
+		choice.selected = initialState(node, "selected", choice);
+		choice.enabled = initialState(node, "enabled", choice);
+		choice.visible = initialState(node, "visible", choice);
 
 		m_context->node = node;
 		pkgrefs = xmlXPathEvalExpression((const xmlChar*) "pkg-ref/@id", m_context);
@@ -166,6 +171,7 @@ bool DistributionXml::package(const std::string& id, DistributionXml::PkgRef& pk
 	pkg.path.clear();
 	pkg.active = true;
 	pkg.activeUnevaluated = false;
+	pkg.activeExpression.clear();
 	
 	m_context->node = nullptr;
 	xpathObj = xmlXPathEvalExpression((const xmlChar*) xpath.c_str(), m_context);
@@ -197,7 +203,10 @@ bool DistributionXml::package(const std::string& id, DistributionXml::PkgRef& pk
 			if (parseBoolean((char*) attrVal, value))
 				pkg.active = pkg.active && value;
 			else
+			{
 				pkg.activeUnevaluated = true;
+				pkg.activeExpression = (char*) attrVal;
+			}
 		}
 
 		if (pkg.path.empty() && node->children && node->children->type == XML_TEXT_NODE && !xmlIsBlankNode(node->children))
@@ -242,4 +251,50 @@ std::vector<DistributionXml::Line> DistributionXml::outline() const
 	if (obj != nullptr)
 		xmlXPathFreeObject(obj);
 	return rv;
+}
+
+std::vector<std::string> DistributionXml::scripts() const
+{
+	std::vector<std::string> rv;
+	xmlXPathObjectPtr obj;
+	
+	m_context->node = nullptr;
+	obj = xmlXPathEvalExpression((const xmlChar*) "/*/script", m_context);
+	for (int i = 0; obj != nullptr && obj->nodesetval != nullptr && i < obj->nodesetval->nodeNr; i++)
+	{
+		xmlChar* text = xmlNodeGetContent(obj->nodesetval->nodeTab[i]);
+		if (text != nullptr)
+		{
+			rv.push_back((char*) text);
+			xmlFree(text);
+		}
+	}
+	if (obj != nullptr)
+		xmlXPathFreeObject(obj);
+	return rv;
+}
+
+static std::string checkScript(xmlXPathContextPtr context, const char* xpath)
+{
+	std::string rv;
+	
+	context->node = nullptr;
+	xmlXPathObjectPtr obj = xmlXPathEvalExpression((const xmlChar*) xpath, context);
+	if (obj != nullptr)
+	{
+		if (obj->stringval)
+			rv = (char*) obj->stringval;
+		xmlXPathFreeObject(obj);
+	}
+	return rv;
+}
+
+std::string DistributionXml::installationCheck() const
+{
+	return checkScript(m_context, "string(/*/installation-check/@script)");
+}
+
+std::string DistributionXml::volumeCheck() const
+{
+	return checkScript(m_context, "string(/*/volume-check/@script)");
 }
