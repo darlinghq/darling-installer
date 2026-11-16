@@ -2,6 +2,10 @@
 #include <dlfcn.h>
 #include <cstring>
 #include <sys/stat.h>
+#include <sys/sysctl.h>
+#include <sys/mount.h>
+#include <unistd.h>
+#include <crt_externs.h>
 #import <Foundation/Foundation.h>
 
 // The public JavaScriptCore C API (JSBase.h, JSValueRef.h, JSObjectRef.h, JSStringRef.h),
@@ -35,6 +39,10 @@ namespace
 		JSObjectRef (*ObjectMakeFunctionWithCallback)(JSContextRef, JSStringRef, JSObjectCallAsFunctionCallback);
 		void (*ObjectSetProperty)(JSContextRef, JSObjectRef, JSStringRef, JSValueRef, unsigned, JSValueRef*);
 		JSValueRef (*ValueMakeBoolean)(JSContextRef, bool);
+		JSValueRef (*ValueMakeNumber)(JSContextRef, double);
+		JSValueRef (*ValueMakeString)(JSContextRef, JSStringRef);
+		JSValueRef (*ValueMakeUndefined)(JSContextRef);
+		bool (*ValueIsBoolean)(JSContextRef, JSValueRef);
 	};
 
 	const JSApi* loadApi()
@@ -68,6 +76,10 @@ namespace
 		LOAD(ObjectMakeFunctionWithCallback, "JSObjectMakeFunctionWithCallback")
 		LOAD(ObjectSetProperty, "JSObjectSetProperty")
 		LOAD(ValueMakeBoolean, "JSValueMakeBoolean")
+		LOAD(ValueMakeNumber, "JSValueMakeNumber")
+		LOAD(ValueMakeString, "JSValueMakeString")
+		LOAD(ValueMakeUndefined, "JSValueMakeUndefined")
+		LOAD(ValueIsBoolean, "JSValueIsBoolean")
 #undef LOAD
 		ok = true;
 		return &api;
@@ -119,6 +131,86 @@ namespace
 					rv += std::string(key) + ":" + quote([value UTF8String]);
 				}
 			}
+		}
+		return rv + "}";
+	}
+
+	std::string stringArgument(JSContextRef ctx, const JSValueRef args[], size_t argc, JSValueRef* exception)
+	{
+		const JSApi* api = loadApi();
+		std::string rv;
+
+		if (argc >= 1)
+		{
+			if (JSStringRef str = api->ValueToStringCopy(ctx, args[0], exception))
+			{
+				rv.assign(api->StringGetMaximumUTF8CStringSize(str), '\0');
+				api->StringGetUTF8CString(str, &rv[0], rv.size());
+				rv.resize(strlen(rv.c_str()));
+				api->StringRelease(str);
+			}
+		}
+		return rv;
+	}
+
+	// system.sysctl(name): a number for an integer value, a string otherwise
+	JSValueRef sysctlValue(JSContextRef ctx, JSObjectRef, JSObjectRef, size_t argc, const JSValueRef args[], JSValueRef* exception)
+	{
+		const JSApi* api = loadApi();
+		std::string name = stringArgument(ctx, args, argc, exception);
+		size_t size = 0;
+
+		if (name.empty() || ::sysctlbyname(name.c_str(), nullptr, &size, nullptr, 0) != 0)
+			return api->ValueMakeUndefined(ctx);
+
+		std::string buffer(size, '\0');
+		if (::sysctlbyname(name.c_str(), &buffer[0], &size, nullptr, 0) != 0)
+			return api->ValueMakeUndefined(ctx);
+
+		// The value's type is not known here: 4 and 8 byte values are taken as integers
+		if (size == sizeof(int32_t))
+		{
+			int32_t v;
+			memcpy(&v, buffer.data(), sizeof(v));
+			return api->ValueMakeNumber(ctx, v);
+		}
+		if (size == sizeof(int64_t))
+		{
+			int64_t v;
+			memcpy(&v, buffer.data(), sizeof(v));
+			return api->ValueMakeNumber(ctx, (double) v);
+		}
+		buffer.resize(strnlen(buffer.c_str(), size));
+		JSStringRef str = api->StringCreateWithUTF8CString(buffer.c_str());
+		JSValueRef value = api->ValueMakeString(ctx, str);
+		api->StringRelease(str);
+		return value;
+	}
+
+	// system.localizedString(key): there are no localizations to look in, so the key itself
+	JSValueRef localizedString(JSContextRef ctx, JSObjectRef, JSObjectRef, size_t argc, const JSValueRef args[], JSValueRef* exception)
+	{
+		const JSApi* api = loadApi();
+		std::string key = stringArgument(ctx, args, argc, exception);
+		JSStringRef str = api->StringCreateWithUTF8CString(key.c_str());
+		JSValueRef value = api->ValueMakeString(ctx, str);
+
+		api->StringRelease(str);
+		return value;
+	}
+
+	// The environment as a JavaScript object literal
+	std::string environment()
+	{
+		std::string rv = "{";
+		for (char** e = *_NSGetEnviron(); *e != nullptr; e++)
+		{
+			const char* eq = strchr(*e, '=');
+			if (eq == nullptr)
+				continue;
+			if (rv.length() > 1)
+				rv += ",";
+			rv += quote(std::string(*e, eq - *e)) + ":" + quote(eq + 1);
 		}
 		return rv + "}";
 	}
@@ -215,10 +307,23 @@ std::unique_ptr<ChoiceScript> ChoiceScript::create(const std::string& targetMoun
 		return nullptr;
 
 	JSGlobalContextRef ctx = script->m_impl->ctx;
-	JSStringRef name = api->StringCreateWithUTF8CString("__fileExistsAtPath");
-	JSObjectRef fn = api->ObjectMakeFunctionWithCallback(ctx, name, fileExistsAtPath);
-	api->ObjectSetProperty(ctx, api->ContextGetGlobalObject(ctx), name, fn, 0, nullptr);
-	api->StringRelease(name);
+	static const struct { const char* name; JSObjectCallAsFunctionCallback callback; } natives[] = {
+		{ "__fileExistsAtPath", fileExistsAtPath },
+		{ "__sysctl", sysctlValue },
+		{ "__localizedString", localizedString },
+	};
+	for (const auto& native : natives)
+	{
+		JSStringRef name = api->StringCreateWithUTF8CString(native.name);
+		JSObjectRef fn = api->ObjectMakeFunctionWithCallback(ctx, name, native.callback);
+		api->ObjectSetProperty(ctx, api->ContextGetGlobalObject(ctx), name, fn, 0, nullptr);
+		api->StringRelease(name);
+	}
+
+	struct statfs fs;
+	double availableKilobytes = 0;
+	if (::statfs(targetMountPoint.c_str(), &fs) == 0)
+		availableKilobytes = (double) fs.f_bavail * fs.f_bsize / 1024;
 
 	std::string setup =
 		"var system = {\n"
@@ -232,10 +337,15 @@ std::unique_ptr<ChoiceScript> ChoiceScript::create(const std::string& targetMoun
 		"    return 0;\n"
 		"  },\n"
 		"  files: { fileExistsAtPath: __fileExistsAtPath },\n"
+		"  sysctl: __sysctl,\n"
+		"  localizedString: __localizedString,\n"
+		"  env: " + environment() + ",\n"
+		"  applications: { fromIdentifier: function (identifier) { return []; } },\n"
 		"  log: function (message) { }\n"
 		"};\n"
-		"var my = { target: { mountpoint: " + quote(targetMountPoint) + ", systemVersion: " + systemVersion(targetMountPoint) + " },\n"
-		"           result: { type: '', message: '' } };\n"
+		"var my = { target: { mountpoint: " + quote(targetMountPoint) + ", systemVersion: " + systemVersion(targetMountPoint) + ",\n"
+		"                     availableKilobytes: " + std::to_string((long long) availableKilobytes) + " },\n"
+		"           result: {} };\n"
 		"var choices = {};\n";
 	std::string error;
 	if (!script->m_impl->run(setup, nullptr, error))
@@ -256,8 +366,9 @@ void ChoiceScript::setChoices(const std::vector<ChoiceState>& choices)
 	for (size_t i = 0; i < choices.size(); i++)
 	{
 		const ChoiceState& c = choices[i];
-		source += (i ? "," : "") + quote(c.id) + ":{selected:" + (c.selected ? "true" : "false")
-				+ ",enabled:" + (c.enabled ? "true" : "false") + ",visible:" + (c.visible ? "true" : "false") + "}";
+		// 1 and 0, not booleans: the Installer's values compare equal to true/false but are not of type boolean
+		source += (i ? "," : "") + quote(c.id) + ":{selected:" + (c.selected ? "1" : "0")
+				+ ",enabled:" + (c.enabled ? "1" : "0") + ",visible:" + (c.visible ? "1" : "0") + "}";
 	}
 	source += "};";
 	m_impl->run(source, nullptr, error);
@@ -269,16 +380,17 @@ bool ChoiceScript::evaluate(const std::string& expression, bool& result, std::st
 
 	if (!m_impl->run("(" + expression + "\n)", &value, error))
 		return false;
-	result = m_impl->api->ValueToBoolean(m_impl->ctx, value);
+	// Only the boolean true counts; any other value (a string, a number) is false
+	result = m_impl->api->ValueIsBoolean(m_impl->ctx, value) && m_impl->api->ValueToBoolean(m_impl->ctx, value);
 	return true;
 }
 
 std::string ChoiceScript::resultType()
 {
-	return m_impl->runString("String(my.result.type)");
+	return m_impl->runString("typeof my.result.type == 'string' ? my.result.type : ''");
 }
 
 std::string ChoiceScript::resultMessage()
 {
-	return m_impl->runString("String(my.result.message)");
+	return m_impl->runString("typeof my.result.message == 'string' ? my.result.message : ''");
 }

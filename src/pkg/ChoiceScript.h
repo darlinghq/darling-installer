@@ -9,8 +9,9 @@
 // part of the system, and without it create() returns null.
 //
 // The script sees the Installer JavaScript objects `system` (version,
-// compareVersions, files.fileExistsAtPath, log), `my` (target.mountpoint,
-// target.systemVersion, result) and `choices` (<id>.selected/enabled/visible).
+// compareVersions, files.fileExistsAtPath, sysctl, env, localizedString,
+// applications.fromIdentifier, log), `my` (target.mountpoint, systemVersion and
+// availableKilobytes, result) and `choices` (<id>.selected/enabled/visible).
 // Anything else is undefined and makes the expression fail.
 class ChoiceScript
 {
@@ -28,7 +29,7 @@ public:
 	bool addScript(const std::string& source, std::string& error);
 	// The state `choices.<id>` reports from now on
 	void setChoices(const std::vector<ChoiceState>& choices);
-	// Evaluates an expression as a boolean
+	// Evaluates an expression; only the boolean true gives true
 	bool evaluate(const std::string& expression, bool& result, std::string& error);
 	// my.result.type / my.result.message as set by the last scripts
 	std::string resultType();
