@@ -8,18 +8,27 @@
 // scripts) with JavaScriptCore, which is loaded at run time: it is an optional
 // part of the system, and without it create() returns null.
 //
-// The script sees the Installer JavaScript objects `system` (version,
-// compareVersions, files.fileExistsAtPath, sysctl, env, localizedString,
-// applications.fromIdentifier, log), `my` (target.mountpoint, systemVersion and
-// availableKilobytes, result) and `choices` (<id>.selected/enabled/visible).
+// The script sees the Installer JavaScript objects (documented as "Installer JS"):
+// `system` (version, compareVersions, files.fileExistsAtPath/plistAtPath/
+// bundleAtPath, sysctl, env, propertiesOf, localizedString, applications.
+// fromIdentifier, log), `my` (target.mountpoint/systemVersion/availableKilobytes,
+// result.type/message/title) and `choices` (<id>.selected/enabled/visible/title/
+// description/packages/packageUpgradeAction).
 // Anything else is undefined and makes the expression fail.
 class ChoiceScript
 {
 public:
+	struct Package
+	{
+		std::string identifier, version;
+	};
 	struct ChoiceState
 	{
-		std::string id;
+		std::string id, title, description;
 		bool selected, enabled, visible;
+		std::vector<Package> packages;
+		// clean, installed, upgrade, downgrade or mixed: how the packages relate to those installed
+		std::string packageUpgradeAction;
 	};
 
 	static std::unique_ptr<ChoiceScript> create(const std::string& targetMountPoint);

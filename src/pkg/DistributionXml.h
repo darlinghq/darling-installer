@@ -21,7 +21,7 @@ public:
 		bool selected; // initially selected, i.e. to be installed
 		bool enabled = true; // whether the user can manipulate the selected status
 		bool visible = true;
-		std::string id, title;
+		std::string id, title, description;
 		std::vector<std::string> pkgref;
 		// Attributes (selected, enabled, visible) holding a JavaScript expression:
 		// the expression, and the names of those not (yet) evaluated, for which the
@@ -34,6 +34,7 @@ public:
 	{
 		size_t installKbytes;
 		std::string path;
+		std::string version; // the pkg-ref version attribute
 		bool active = true; // false: not installed even if its choice is selected
 		bool activeUnevaluated = false; // "active" is a JavaScript expression
 		std::string activeExpression;

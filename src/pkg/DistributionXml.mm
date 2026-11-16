@@ -126,6 +126,9 @@ std::vector<DistributionXml::Choice> DistributionXml::choices() const
 		attrVal = xmlGetProp(node, (xmlChar*) "title");
 		if (attrVal) choice.title = (char*) attrVal;
 
+		attrVal = xmlGetProp(node, (xmlChar*) "description");
+		if (attrVal) choice.description = (char*) attrVal;
+
 		attrVal = xmlGetProp(node, (xmlChar*) "id");
 		if (!attrVal) throw std::runtime_error("Element <choice> lacks 'id' attributte");
 		choice.id = (char*) attrVal;
@@ -169,6 +172,7 @@ bool DistributionXml::package(const std::string& id, DistributionXml::PkgRef& pk
 	
 	pkg.installKbytes = 0;
 	pkg.path.clear();
+	pkg.version.clear();
 	pkg.active = true;
 	pkg.activeUnevaluated = false;
 	pkg.activeExpression.clear();
@@ -194,6 +198,10 @@ bool DistributionXml::package(const std::string& id, DistributionXml::PkgRef& pk
 		attrVal = xmlGetProp(node, (xmlChar*) "installKBytes");
 		if (attrVal != nullptr)
 			pkg.installKbytes = atoi((char*) attrVal);
+
+		attrVal = xmlGetProp(node, (xmlChar*) "version");
+		if (attrVal != nullptr)
+			pkg.version = (char*) attrVal;
 
 		// pkg-refs sharing an id are merged; "active" may sit on any of them
 		attrVal = xmlGetProp(node, (xmlChar*) "active");

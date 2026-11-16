@@ -90,6 +90,83 @@ ChoiceScript* Installer::script()
 	return m_script.get();
 }
 
+// -1, 0 or 1 as system.compareVersions; dot separated numbers
+static int compareVersionStrings(const std::string& a, const std::string& b)
+{
+	size_t i = 0, j = 0;
+	
+	while (i < a.length() || j < b.length())
+	{
+		long x = 0, y = 0;
+		
+		if (i < a.length())
+		{
+			x = strtol(a.c_str() + i, nullptr, 10);
+			size_t dot = a.find('.', i);
+			i = (dot == std::string::npos) ? a.length() : dot + 1;
+		}
+		if (j < b.length())
+		{
+			y = strtol(b.c_str() + j, nullptr, 10);
+			size_t dot = b.find('.', j);
+			j = (dot == std::string::npos) ? b.length() : dot + 1;
+		}
+		if (x != y)
+			return x < y ? -1 : 1;
+	}
+	return 0;
+}
+
+// What the JavaScript sees of the choices: their state and how their packages relate to the installed ones
+std::vector<ChoiceScript::ChoiceState> Installer::choiceStates()
+{
+	std::vector<ChoiceScript::ChoiceState> states;
+	
+	for (const DistributionXml::Choice& c : m_choices)
+	{
+		ChoiceScript::ChoiceState state;
+		int notInstalled = 0, same = 0, upgrades = 0, downgrades = 0;
+		
+		state.id = c.id;
+		state.title = c.title;
+		state.description = c.description;
+		state.selected = c.selected;
+		state.enabled = c.enabled;
+		state.visible = c.visible;
+		
+		for (const std::string& pkgId : c.pkgref)
+		{
+			DistributionXml::PkgRef ref;
+			ReceiptsDb::InstalledPackageInfo installed;
+			
+			if (!m_distribution->package(pkgId, ref))
+				continue;
+			state.packages.push_back({ pkgId, ref.version });
+			
+			if (!ReceiptsDb::getInstalledPackageInfo(pkgId.c_str(), installed))
+				notInstalled++;
+			else
+			{
+				int cmp = compareVersionStrings(ref.version, installed.version);
+				if (cmp > 0) upgrades++;
+				else if (cmp < 0) downgrades++;
+				else same++;
+			}
+		}
+		
+		// clean: none installed; installed: all installed; upgrade/downgrade: all newer/older; otherwise mixed
+		int total = notInstalled + same + upgrades + downgrades;
+		if (total == 0 || notInstalled == total) state.packageUpgradeAction = "clean";
+		else if (same == total) state.packageUpgradeAction = "installed";
+		else if (upgrades == total) state.packageUpgradeAction = "upgrade";
+		else if (downgrades == total) state.packageUpgradeAction = "downgrade";
+		else state.packageUpgradeAction = "mixed";
+		
+		states.push_back(state);
+	}
+	return states;
+}
+
 // Evaluates the JavaScript expressions of selected/enabled/visible. A choice can
 // refer to other choices, so evaluate until the states settle.
 void Installer::evaluateChoiceExpressions()
@@ -104,12 +181,9 @@ void Installer::evaluateChoiceExpressions()
 	
 	for (int pass = 0; pass < 5; pass++)
 	{
-		std::vector<ChoiceScript::ChoiceState> states;
 		bool changed = false;
 		
-		for (const DistributionXml::Choice& c : m_choices)
-			states.push_back({ c.id, c.selected, c.enabled, c.visible });
-		js->setChoices(states);
+		js->setChoices(choiceStates());
 		
 		for (DistributionXml::Choice& c : m_choices)
 		{
@@ -155,10 +229,7 @@ bool Installer::isPackageActive(const std::string& pkgId, const DistributionXml:
 	
 	if (js != nullptr)
 	{
-		std::vector<ChoiceScript::ChoiceState> states;
-		for (const DistributionXml::Choice& c : m_choices)
-			states.push_back({ c.id, c.selected, c.enabled, c.visible });
-		js->setChoices(states);
+		js->setChoices(choiceStates());
 		
 		if (js->evaluate(ref.activeExpression, value, error))
 			return value && ref.active;
@@ -169,7 +240,7 @@ bool Installer::isPackageActive(const std::string& pkgId, const DistributionXml:
 }
 
 // <installation-check> and <volume-check>: a script returning false stops the
-// installation, unless it sets my.result.type to Warning.
+// installation, unless it sets my.result.type to Warn.
 void Installer::runChecks()
 {
 	if (!m_distribution)
@@ -198,7 +269,7 @@ void Installer::runChecks()
 			continue;
 		
 		std::string message = js->resultMessage();
-		if (js->resultType() == "Warning")
+		if (js->resultType() == "Warn")
 			std::cout << "installer: Warning: " << message << "\n";
 		else
 			throw std::runtime_error(message.empty() ? std::string("The ") + check.first + " of the package failed" : message);

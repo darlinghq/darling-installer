@@ -6,6 +6,7 @@
 #include <sys/mount.h>
 #include <unistd.h>
 #include <crt_externs.h>
+#include <syslog.h>
 #import <Foundation/Foundation.h>
 
 // The public JavaScriptCore C API (JSBase.h, JSValueRef.h, JSObjectRef.h, JSStringRef.h),
@@ -110,29 +111,56 @@ namespace
 		return rv + "\"";
 	}
 
-	// SystemVersion.plist of the volume mounted at root as a JavaScript object literal
-	std::string systemVersion(const std::string& root)
+	// A property list value as JSON-compatible Foundation objects (dates, data and
+	// other types without a JSON form become strings)
+	id jsonSafe(id value)
 	{
-		static const char* keys[] = { "ProductName", "ProductVersion", "ProductBuildVersion", "ProductUserVisibleVersion" };
-		std::string rv = "{";
+		if ([value isKindOfClass: [NSDictionary class]])
+		{
+			NSMutableDictionary* rv = [NSMutableDictionary dictionary];
+			for (id key in value)
+				rv[[key description]] = jsonSafe(value[key]);
+			return rv;
+		}
+		if ([value isKindOfClass: [NSArray class]])
+		{
+			NSMutableArray* rv = [NSMutableArray array];
+			for (id item in value)
+				[rv addObject: jsonSafe(item)];
+			return rv;
+		}
+		if ([value isKindOfClass: [NSString class]] || [value isKindOfClass: [NSNumber class]])
+			return value;
+		return [value description];
+	}
+
+	// The property list at path (or the Info.plist of the bundle there) as JSON text; empty if unreadable
+	std::string plistAsJSON(const std::string& path, bool bundle)
+	{
+		std::string rv;
 
 		@autoreleasepool
 		{
-			NSString* path = [[NSString stringWithUTF8String: root.c_str()] stringByAppendingPathComponent: @"System/Library/CoreServices/SystemVersion.plist"];
-			NSDictionary* plist = [NSDictionary dictionaryWithContentsOfFile: path];
+			NSString* file = [NSString stringWithUTF8String: path.c_str()];
+			if (bundle)
+				file = [file stringByAppendingPathComponent: @"Contents/Info.plist"];
 
-			for (const char* key : keys)
+			NSDictionary* plist = [NSDictionary dictionaryWithContentsOfFile: file];
+			if (plist != nil)
 			{
-				id value = plist[[NSString stringWithUTF8String: key]];
-				if ([value isKindOfClass: [NSString class]])
-				{
-					if (rv.length() > 1)
-						rv += ",";
-					rv += std::string(key) + ":" + quote([value UTF8String]);
-				}
+				NSData* json = [NSJSONSerialization dataWithJSONObject: jsonSafe(plist) options: 0 error: nil];
+				if (json != nil)
+					rv.assign((const char*) [json bytes], [json length]);
 			}
 		}
-		return rv + "}";
+		return rv;
+	}
+
+	// SystemVersion.plist of the volume mounted at root as a JavaScript object literal
+	std::string systemVersion(const std::string& root)
+	{
+		std::string json = plistAsJSON(root + "/System/Library/CoreServices/SystemVersion.plist", false);
+		return json.empty() ? "{}" : json;
 	}
 
 	std::string stringArgument(JSContextRef ctx, const JSValueRef args[], size_t argc, JSValueRef* exception)
@@ -187,16 +215,34 @@ namespace
 		return value;
 	}
 
-	// system.localizedString(key): there are no localizations to look in, so the key itself
-	JSValueRef localizedString(JSContextRef ctx, JSObjectRef, JSObjectRef, size_t argc, const JSValueRef args[], JSValueRef* exception)
+	JSValueRef jsonString(JSContextRef ctx, const std::string& json)
 	{
 		const JSApi* api = loadApi();
-		std::string key = stringArgument(ctx, args, argc, exception);
-		JSStringRef str = api->StringCreateWithUTF8CString(key.c_str());
-		JSValueRef value = api->ValueMakeString(ctx, str);
 
+		if (json.empty())
+			return api->ValueMakeUndefined(ctx);
+		JSStringRef str = api->StringCreateWithUTF8CString(json.c_str());
+		JSValueRef value = api->ValueMakeString(ctx, str);
 		api->StringRelease(str);
 		return value;
+	}
+
+	// __plistJSON(path) and __bundleJSON(path): the plist as a JSON string, undefined if unreadable
+	JSValueRef plistJSON(JSContextRef ctx, JSObjectRef, JSObjectRef, size_t argc, const JSValueRef args[], JSValueRef* exception)
+	{
+		return jsonString(ctx, plistAsJSON(stringArgument(ctx, args, argc, exception), false));
+	}
+
+	JSValueRef bundleJSON(JSContextRef ctx, JSObjectRef, JSObjectRef, size_t argc, const JSValueRef args[], JSValueRef* exception)
+	{
+		return jsonString(ctx, plistAsJSON(stringArgument(ctx, args, argc, exception), true));
+	}
+
+	// system.log(string): an Installer log entry with the JS: prefix
+	JSValueRef logEntry(JSContextRef ctx, JSObjectRef, JSObjectRef, size_t argc, const JSValueRef args[], JSValueRef* exception)
+	{
+		syslog(LOG_INSTALL | LOG_INFO, "JS: %s", stringArgument(ctx, args, argc, exception).c_str());
+		return loadApi()->ValueMakeUndefined(ctx);
 	}
 
 	// The environment as a JavaScript object literal
@@ -310,7 +356,9 @@ std::unique_ptr<ChoiceScript> ChoiceScript::create(const std::string& targetMoun
 	static const struct { const char* name; JSObjectCallAsFunctionCallback callback; } natives[] = {
 		{ "__fileExistsAtPath", fileExistsAtPath },
 		{ "__sysctl", sysctlValue },
-		{ "__localizedString", localizedString },
+		{ "__plistJSON", plistJSON },
+		{ "__bundleJSON", bundleJSON },
+		{ "__log", logEntry },
 	};
 	for (const auto& native : natives)
 	{
@@ -336,12 +384,19 @@ std::unique_ptr<ChoiceScript> ChoiceScript::create(const std::string& targetMoun
 		"    }\n"
 		"    return 0;\n"
 		"  },\n"
-		"  files: { fileExistsAtPath: __fileExistsAtPath },\n"
+		"  files: {\n"
+		"    fileExistsAtPath: __fileExistsAtPath,\n"
+		"    plistAtPath: function (p) { var j = __plistJSON(p); return j === undefined ? null : JSON.parse(j); },\n"
+		"    bundleAtPath: function (p) { var j = __bundleJSON(p); return j === undefined ? null : JSON.parse(j); }\n"
+		"  },\n"
 		"  sysctl: __sysctl,\n"
-		"  localizedString: __localizedString,\n"
+		"  propertiesOf: function (o) { var r = []; for (var k in o) r.push(k); return r; },\n"
+		// The package carries no localized strings that could be looked up, so every key is missing
+		"  localizedString: function (key) { return null; },\n"
+		"  localizedStringWithFormat: function (key) { return null; },\n"
 		"  env: " + environment() + ",\n"
 		"  applications: { fromIdentifier: function (identifier) { return []; } },\n"
-		"  log: function (message) { }\n"
+		"  log: __log\n"
 		"};\n"
 		"var my = { target: { mountpoint: " + quote(targetMountPoint) + ", systemVersion: " + systemVersion(targetMountPoint) + ",\n"
 		"                     availableKilobytes: " + std::to_string((long long) availableKilobytes) + " },\n"
@@ -368,7 +423,12 @@ void ChoiceScript::setChoices(const std::vector<ChoiceState>& choices)
 		const ChoiceState& c = choices[i];
 		// 1 and 0, not booleans: the Installer's values compare equal to true/false but are not of type boolean
 		source += (i ? "," : "") + quote(c.id) + ":{selected:" + (c.selected ? "1" : "0")
-				+ ",enabled:" + (c.enabled ? "1" : "0") + ",visible:" + (c.visible ? "1" : "0") + "}";
+				+ ",enabled:" + (c.enabled ? "1" : "0") + ",visible:" + (c.visible ? "1" : "0")
+				+ ",title:" + quote(c.title) + ",description:" + quote(c.description)
+				+ ",packageUpgradeAction:" + quote(c.packageUpgradeAction) + ",packages:[";
+		for (size_t j = 0; j < c.packages.size(); j++)
+			source += (j ? "," : "") + std::string("{identifier:") + quote(c.packages[j].identifier) + ",version:" + quote(c.packages[j].version) + "}";
+		source += "]}";
 	}
 	source += "};";
 	m_impl->run(source, nullptr, error);

@@ -41,6 +41,7 @@ private:
 	void loadChoices();
 	ChoiceScript* script();
 	void evaluateChoiceExpressions();
+	std::vector<ChoiceScript::ChoiceState> choiceStates();
 	bool isPackageActive(const std::string& pkgId, const DistributionXml::PkgRef& ref);
 	void runChecks();
 	const DistributionXml::Choice* findChoice(const std::string& id) const;
