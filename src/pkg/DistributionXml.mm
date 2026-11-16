@@ -39,6 +39,30 @@ std::string DistributionXml::title() const
 	return title;
 }
 
+std::vector<std::string> DistributionXml::domains() const
+{
+	static const struct { const char* attribute; const char* domain; } kDomains[] = {
+		{ "enable_localSystem", "LocalSystem" },
+		{ "enable_currentUserHome", "CurrentUserHomeDirectory" },
+	};
+	std::vector<std::string> rv;
+	
+	m_context->node = nullptr;
+	for (const auto& d : kDomains)
+	{
+		std::string xpath = std::string("string(/*/domains/@") + d.attribute + ")";
+		xmlXPathObjectPtr obj = xmlXPathEvalExpression((const xmlChar*) xpath.c_str(), m_context);
+		
+		if (obj != nullptr)
+		{
+			if (obj->stringval && strcmp((char*) obj->stringval, "true") == 0)
+				rv.push_back(d.domain);
+			xmlXPathFreeObject(obj);
+		}
+	}
+	return rv;
+}
+
 std::vector<DistributionXml::Choice> DistributionXml::choices() const
 {
 	std::vector<DistributionXml::Choice> rv;

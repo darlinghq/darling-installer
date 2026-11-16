@@ -2,6 +2,7 @@
 #define INSTALLER_H
 #include <memory>
 #include <string>
+#include <vector>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include "archive/XARArchive.h"
@@ -11,7 +12,19 @@
 class Installer
 {
 public:
-	Installer(const char* pkg, const char* target);
+	// target may be null when the package is only inspected
+	Installer(const char* pkg, const char* target = nullptr);
+	
+	struct PackageSummary
+	{
+		std::string name;
+		size_t installKBytes;
+		bool requiresAuthentication;
+	};
+	// The packages installPackage() would install (all subpackages of a metapackage)
+	std::vector<PackageSummary> packageSummaries();
+	// Domains the package can be installed into, as accepted by -target
+	std::vector<std::string> domains();
 	
 	void installPackage();
 	void enableVerboseR() { m_verboseR = true; }
@@ -37,12 +50,12 @@ private:
 	const char* getPackageName();
 private:
 	const char* m_pkg;
-	const char* m_target;
+	std::string m_target;
 	std::shared_ptr<XARArchive> m_xar;
 	std::string m_originalCwd;
 	
 	// State for the currently installed sub-package
-	const char* m_subdir;
+	const char* m_subdir = "";
 	std::shared_ptr<PackageInfoXml> m_pkgInfo;
 	std::string m_scriptsDir, m_installLocation;
 

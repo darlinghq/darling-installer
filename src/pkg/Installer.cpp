@@ -24,23 +24,27 @@
 #include <fcntl.h>
 
 Installer::Installer(const char* pkg, const char* target)
-: m_pkg(pkg), m_target(target)
+: m_pkg(pkg)
 {
 	std::shared_ptr<FileReader> file;
 	struct stat st;
 	char origCwd[PATH_MAX];
 	
-	// DomainKey
-	if (strcmp(target, "LocalSystem") == 0)
-		target = "/";
-	else if (target[0] != '/')
-		throw std::runtime_error("Invalid target path");
+	if (::stat(pkg, &st) != 0 || !S_ISREG(st.st_mode))
+		throw std::runtime_error(std::string("Error - the package path specified was invalid: '") + pkg + "'.");
 	
-	if (::stat(target, &st) != 0)
-		throw std::runtime_error("Invalid target path");
-	
-	if (!S_ISDIR(st.st_mode))
-		throw std::runtime_error("Invalid target path; not a directory");
+	if (target != nullptr)
+	{
+		const char* path = target;
+		
+		// DomainKey
+		if (strcmp(target, "LocalSystem") == 0)
+			path = "/";
+		
+		if (path[0] != '/' || ::stat(path, &st) != 0 || !S_ISDIR(st.st_mode))
+			throw std::runtime_error(std::string("Error trying to locate volume at ") + target);
+		m_target = path;
+	}
 	
 	file.reset(new FileReader(pkg));
 	m_xar.reset(new XARArchive(file));
@@ -49,9 +53,72 @@ Installer::Installer(const char* pkg, const char* target)
 	m_originalCwd = origCwd;
 }
 
+static std::string stripPackageSuffix(std::string name)
+{
+	size_t slash = name.rfind('/');
+	if (slash != std::string::npos)
+		name.erase(0, slash + 1);
+	if (name.length() > 4 && name.compare(name.length() - 4, 4, ".pkg") == 0)
+		name.erase(name.length() - 4);
+	return name;
+}
+
+std::vector<std::string> Installer::domains()
+{
+	std::shared_ptr<Reader> distributionFile(m_xar->openFile("Distribution"));
+	
+	// Only a distribution can enable domains
+	if (!distributionFile)
+		return {};
+	return DistributionXml(distributionFile).domains();
+}
+
+std::vector<Installer::PackageSummary> Installer::packageSummaries()
+{
+	std::vector<PackageSummary> rv;
+	std::shared_ptr<Reader> distributionFile(m_xar->openFile("Distribution"));
+	std::string subdir;
+	
+	if (!distributionFile)
+	{
+		m_subdir = "";
+		std::shared_ptr<PackageInfoXml> info = loadPackageInfo();
+		rv.push_back({ stripPackageSuffix(m_pkg), info->installKBytes(), info->requiresAuthentication() });
+		return rv;
+	}
+	
+	DistributionXml distribution(distributionFile);
+	for (const DistributionXml::Choice& c : distribution.choices())
+	{
+		if (!c.selected)
+			continue;
+		
+		for (const std::string& pkgId : c.pkgref)
+		{
+			DistributionXml::PkgRef ref;
+			
+			if (!distribution.package(pkgId, ref))
+				throw std::runtime_error("Cannot find <pkg-ref> with id '" + pkgId + "'");
+			
+			subdir = ref.path;
+			if (!subdir.empty() && subdir[0] == '#')
+				subdir.erase(0, 1);
+			
+			m_subdir = subdir.c_str();
+			std::shared_ptr<PackageInfoXml> info = loadPackageInfo();
+			rv.push_back({ stripPackageSuffix(subdir), info->installKBytes(), info->requiresAuthentication() });
+		}
+	}
+	m_subdir = "";
+	return rv;
+}
+
 void Installer::installPackage()
 {
 	std::shared_ptr<Reader> distributionFile;
+	
+	if (m_target.empty())
+		throw std::runtime_error("Must specify -target");
 	
 	// If "Distribution" file exists, then read it and find out choices enabled by default (normally located in subdirectories)
 	// If no "Distribution" file exists, then there are no subdirectories and we proceed with installation
@@ -585,12 +652,12 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 
 		setenv("COMMAND_LINE_INSTALL", "1", 1);
 		setenv("PACKAGE_PATH", m_pkg, 1);
-		setenv("DSTVOLUME", m_target, 1);
+		setenv("DSTVOLUME", m_target.c_str(), 1);
 		setenv("DSTROOT", installLocation, 1);
 		setenv("INSTALLER_TEMP", scriptTempDir, 1);
 		setenv("TMPDIR", scriptTempDir, 1);
 
-		execl(scriptName, scriptName, m_pkg, installLocation, m_target, nullptr);
+		execl(scriptName, scriptName, m_pkg, installLocation, m_target.c_str(), nullptr);
 
 		err = errno;
 		write(pipes[1], &err, sizeof(err));

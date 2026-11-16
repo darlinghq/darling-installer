@@ -28,6 +28,8 @@ public:
 		std::string path;
 	};
 	
+	// Domains the package enables: LocalSystem, CurrentUserHomeDirectory
+	std::vector<std::string> domains() const;
 	std::vector<Choice> choices() const;
 	bool package(const std::string& id, PkgRef& pkg) const;
 private:

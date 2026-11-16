@@ -23,6 +23,9 @@ public:
 	
 	size_t installKBytes() const;
 	
+	// Whether installing needs administrator rights (the auth attribute)
+	bool requiresAuthentication() const;
+	
 	static const char* SCRIPT_PREFLIGHT;
 	static const char* SCRIPT_POSTFLIGHT;
 	static const char* SCRIPT_PREINSTALL;
