@@ -54,6 +54,27 @@ static bool parseBoolean(const char* text, bool& value)
 	return false;
 }
 
+static bool initialState(xmlNodePtr node, const char* name, std::vector<std::string>& unevaluated)
+{
+	std::string start = std::string("start_") + name;
+	bool value;
+	
+	for (const std::string& attr : { start, std::string(name) })
+	{
+		xmlChar* text = xmlGetProp(node, (const xmlChar*) attr.c_str());
+		if (text == nullptr)
+			continue;
+		
+		bool literal = parseBoolean((char*) text, value);
+		xmlFree(text);
+		if (literal)
+			return value;
+		unevaluated.push_back(attr);
+		break;
+	}
+	return true;
+}
+
 std::vector<std::string> DistributionXml::domains() const
 {
 	static const struct { const char* attribute; const char* domain; } kDomains[] = {
@@ -104,30 +125,11 @@ std::vector<DistributionXml::Choice> DistributionXml::choices() const
 		if (!attrVal) throw std::runtime_error("Element <choice> lacks 'id' attributte");
 		choice.id = (char*) attrVal;
 		
-		// Initial state: start_selected (a plain boolean) if given, otherwise
-		// "selected" when it is a literal boolean; the default is true.
-		choice.selected = true;
-		attrVal = xmlGetProp(node, (xmlChar*) "start_selected");
-		if (attrVal != nullptr)
-		{
-			bool value;
-			if (parseBoolean((char*) attrVal, value))
-				choice.selected = value;
-			else
-				choice.unevaluated.push_back("start_selected");
-		}
-		else
-		{
-			attrVal = xmlGetProp(node, (xmlChar*) "selected");
-			if (attrVal != nullptr)
-			{
-				bool value;
-				if (parseBoolean((char*) attrVal, value))
-					choice.selected = value;
-				else
-					choice.unevaluated.push_back("selected");
-			}
-		}
+		// Initial state: start_X (a plain boolean) if given, otherwise the
+		// attribute X when it is a literal boolean; the default is true.
+		choice.selected = initialState(node, "selected", choice.unevaluated);
+		choice.enabled = initialState(node, "enabled", choice.unevaluated);
+		choice.visible = initialState(node, "visible", choice.unevaluated);
 
 		m_context->node = node;
 		pkgrefs = xmlXPathEvalExpression((const xmlChar*) "pkg-ref/@id", m_context);
@@ -207,4 +209,37 @@ bool DistributionXml::package(const std::string& id, DistributionXml::PkgRef& pk
 
 	xmlXPathFreeObject(xpathObj);
 	return true;
+}
+
+static void readLines(xmlNodePtr parent, std::vector<DistributionXml::Line>& lines)
+{
+	for (xmlNodePtr n = parent->children; n != nullptr; n = n->next)
+	{
+		if (n->type != XML_ELEMENT_NODE || xmlStrcmp(n->name, (const xmlChar*) "line") != 0)
+			continue;
+		
+		xmlChar* id = xmlGetProp(n, (const xmlChar*) "choice");
+		if (id == nullptr)
+			continue;
+		
+		DistributionXml::Line line;
+		line.choice = (char*) id;
+		xmlFree(id);
+		readLines(n, line.children);
+		lines.push_back(line);
+	}
+}
+
+std::vector<DistributionXml::Line> DistributionXml::outline() const
+{
+	std::vector<Line> rv;
+	xmlXPathObjectPtr obj;
+	
+	m_context->node = nullptr;
+	obj = xmlXPathEvalExpression((const xmlChar*) "/*/choices-outline", m_context);
+	if (obj != nullptr && obj->nodesetval != nullptr && obj->nodesetval->nodeNr > 0)
+		readLines(obj->nodesetval->nodeTab[0], rv);
+	if (obj != nullptr)
+		xmlXPathFreeObject(obj);
+	return rv;
 }

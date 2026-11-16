@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <iostream>
+#include <ostream>
 #include <cstring>
 #include <sstream>
 #include <errno.h>
@@ -53,6 +54,272 @@ Installer::Installer(const char* pkg, const char* target)
 	m_originalCwd = origCwd;
 }
 
+void Installer::loadChoices()
+{
+	if (m_choicesLoaded)
+		return;
+	m_choicesLoaded = true;
+	
+	std::shared_ptr<Reader> distributionFile(m_xar->openFile("Distribution"));
+	if (!distributionFile)
+		return;
+	
+	m_distribution = std::make_shared<DistributionXml>(distributionFile);
+	m_choices = m_distribution->choices();
+}
+
+void Installer::applyChoiceChanges(const std::vector<ChoiceChange>& changes)
+{
+	loadChoices();
+	
+	for (const ChoiceChange& change : changes)
+	{
+		// A change naming a choice the package lacks is ignored
+		for (DistributionXml::Choice& c : m_choices)
+		{
+			if (c.id != change.identifier)
+				continue;
+			
+			if (change.toggle)
+				c.selected = !c.selected;
+			else if (change.attribute == "selected")
+				c.selected = change.value != 0;
+			else if (change.attribute == "enabled")
+				c.enabled = change.value != 0;
+			else if (change.attribute == "visible")
+				c.visible = change.value != 0;
+			else if (change.attribute == "customLocation")
+				std::cerr << "installer: Warning: customLocation for choice " << c.id << " is not supported\n";
+		}
+	}
+}
+
+static void indent(std::ostream& out, int depth)
+{
+	for (int i = 0; i < depth; i++)
+		out << "    ";
+}
+
+static std::string xmlText(const std::string& s)
+{
+	std::string rv;
+	for (char c : s)
+	{
+		switch (c)
+		{
+			case '&': rv += "&amp;"; break;
+			case '<': rv += "&lt;"; break;
+			case '>': rv += "&gt;"; break;
+			default: rv += c;
+		}
+	}
+	return rv;
+}
+
+static void plistHeader(std::ostream& out)
+{
+	out << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+		"<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+		"<plist version=\"1.0\">\n";
+}
+
+static std::string fileURL(const std::string& path, const std::string& fragment)
+{
+	std::string url = "file://localhost";
+	static const char* hex = "0123456789ABCDEF";
+	
+	for (unsigned char c : path)
+	{
+		if (isalnum(c) || strchr("/-._~", c))
+			url += c;
+		else
+		{
+			url += '%';
+			url += hex[c >> 4];
+			url += hex[c & 15];
+		}
+	}
+	return url + "#" + fragment;
+}
+
+const DistributionXml::Choice* Installer::findChoice(const std::string& id) const
+{
+	for (const DistributionXml::Choice& c : m_choices)
+	{
+		if (c.id == id)
+			return &c;
+	}
+	return nullptr;
+}
+
+// 1: the choice (or all of its subchoices) is selected, 0: none, -1: some of them
+int Installer::selectionState(const DistributionXml::Line& line) const
+{
+	const DistributionXml::Choice* c = findChoice(line.choice);
+	
+	if (line.children.empty())
+		return (c != nullptr && c->selected) ? 1 : 0;
+	return selectionState(line.children);
+}
+
+int Installer::selectionState(const std::vector<DistributionXml::Line>& lines) const
+{
+	bool any = false, all = true;
+	
+	for (const DistributionXml::Line& l : lines)
+	{
+		int state = selectionState(l);
+		any = any || state != 0;
+		all = all && state == 1;
+	}
+	return all ? 1 : (any ? -1 : 0);
+}
+
+void Installer::printChoice(std::ostream& out, int depth, const std::string& id, const std::string& title,
+		bool enabled, bool visible, int selected, size_t kbytes, const std::vector<std::string>& packages,
+		const std::vector<DistributionXml::Line>& children) const
+{
+	indent(out, depth); out << "<dict>\n";
+	indent(out, depth + 1); out << "<key>childItems</key>\n";
+	if (children.empty())
+	{
+		indent(out, depth + 1); out << "<array/>\n";
+	}
+	else
+	{
+		indent(out, depth + 1); out << "<array>\n";
+		for (const DistributionXml::Line& l : children)
+			printLine(out, depth + 2, l);
+		indent(out, depth + 1); out << "</array>\n";
+	}
+	indent(out, depth + 1); out << "<key>choiceIdentifier</key>\n";
+	indent(out, depth + 1); out << "<string>" << xmlText(id) << "</string>\n";
+	indent(out, depth + 1); out << "<key>choiceIsEnabled</key>\n";
+	indent(out, depth + 1); out << (enabled ? "<true/>" : "<false/>") << "\n";
+	indent(out, depth + 1); out << "<key>choiceIsSelected</key>\n";
+	indent(out, depth + 1); out << "<integer>" << selected << "</integer>\n";
+	indent(out, depth + 1); out << "<key>choiceIsVisible</key>\n";
+	indent(out, depth + 1); out << (visible ? "<true/>" : "<false/>") << "\n";
+	indent(out, depth + 1); out << "<key>choiceSizeInKilobytes</key>\n";
+	indent(out, depth + 1); out << "<integer>" << kbytes << "</integer>\n";
+	indent(out, depth + 1); out << "<key>choiceTitle</key>\n";
+	indent(out, depth + 1); out << "<string>" << xmlText(title) << "</string>\n";
+	indent(out, depth + 1); out << "<key>pathsOfActivePackagesInChoice</key>\n";
+	if (packages.empty())
+	{
+		indent(out, depth + 1); out << "<array/>\n";
+	}
+	else
+	{
+		indent(out, depth + 1); out << "<array>\n";
+		for (const std::string& p : packages)
+		{
+			indent(out, depth + 2); out << "<string>" << xmlText(p) << "</string>\n";
+		}
+		indent(out, depth + 1); out << "</array>\n";
+	}
+	indent(out, depth); out << "</dict>\n";
+}
+
+void Installer::printLine(std::ostream& out, int depth, const DistributionXml::Line& line) const
+{
+	const DistributionXml::Choice* c = findChoice(line.choice);
+	std::vector<std::string> packages;
+	size_t kbytes = 0;
+	
+	if (c == nullptr)
+		return;
+	
+	char* real = realpath(m_pkg, nullptr);
+	std::string pkgPath = real ? real : m_pkg;
+	free(real);
+	
+	for (const std::string& pkgId : c->pkgref)
+	{
+		DistributionXml::PkgRef ref;
+		
+		if (!m_distribution->package(pkgId, ref) || !ref.active)
+			continue;
+		
+		std::string sub = ref.path;
+		if (!sub.empty() && sub[0] == '#')
+			sub.erase(0, 1);
+		packages.push_back(fileURL(pkgPath, sub));
+		kbytes += ref.installKbytes;
+	}
+	
+	printChoice(out, depth, c->id, c->title.empty() ? c->id : c->title, c->enabled, c->visible,
+			selectionState(line), kbytes, packages, line.children);
+}
+
+void Installer::printChoicesXML(std::ostream& out)
+{
+	loadChoices();
+	plistHeader(out);
+	
+	if (!m_distribution)
+	{
+		out << "<array/>\n</plist>\n";
+		return;
+	}
+	
+	std::vector<DistributionXml::Line> outline = m_distribution->outline();
+	
+	out << "<array>\n";
+	printChoice(out, 1, "__ROOT_CHOICE_IDENT_" + m_distribution->title(), m_distribution->title(), true, true,
+			selectionState(outline), 0, {}, outline);
+	out << "</array>\n</plist>\n";
+}
+
+static void collectLines(const std::vector<DistributionXml::Line>& lines, std::vector<std::string>& ids)
+{
+	for (const DistributionXml::Line& l : lines)
+	{
+		ids.push_back(l.choice);
+		collectLines(l.children, ids);
+	}
+}
+
+void Installer::printChoiceChanges(std::ostream& out)
+{
+	loadChoices();
+	plistHeader(out);
+	
+	std::vector<std::string> ids;
+	if (m_distribution)
+		collectLines(m_distribution->outline(), ids);
+	
+	if (ids.empty())
+	{
+		out << "<array/>\n</plist>\n";
+		return;
+	}
+	
+	out << "<array>\n";
+	for (const std::string& id : ids)
+	{
+		const DistributionXml::Choice* c = findChoice(id);
+		if (c == nullptr)
+			continue;
+		
+		struct { const char* attribute; bool isBool; int value; } attrs[] = {
+			{ "visible", true, c->visible }, { "enabled", true, c->enabled }, { "selected", false, c->selected },
+		};
+		for (const auto& a : attrs)
+		{
+			out << "    <dict>\n"
+				"        <key>attributeSetting</key>\n"
+				"        " << (a.isBool ? (a.value ? "<true/>" : "<false/>") : (a.value ? "<integer>1</integer>" : "<integer>0</integer>")) << "\n"
+				"        <key>choiceAttribute</key>\n"
+				"        <string>" << a.attribute << "</string>\n"
+				"        <key>choiceIdentifier</key>\n"
+				"        <string>" << xmlText(id) << "</string>\n"
+				"    </dict>\n";
+		}
+	}
+	out << "</array>\n</plist>\n";
+}
+
 static std::string stripPackageSuffix(std::string name)
 {
 	size_t slash = name.rfind('/');
@@ -76,10 +343,10 @@ std::vector<std::string> Installer::domains()
 std::vector<Installer::PackageSummary> Installer::packageSummaries()
 {
 	std::vector<PackageSummary> rv;
-	std::shared_ptr<Reader> distributionFile(m_xar->openFile("Distribution"));
 	std::string subdir;
 	
-	if (!distributionFile)
+	loadChoices();
+	if (!m_distribution)
 	{
 		m_subdir = "";
 		std::shared_ptr<PackageInfoXml> info = loadPackageInfo();
@@ -87,8 +354,7 @@ std::vector<Installer::PackageSummary> Installer::packageSummaries()
 		return rv;
 	}
 	
-	DistributionXml distribution(distributionFile);
-	for (const DistributionXml::Choice& c : distribution.choices())
+	for (const DistributionXml::Choice& c : m_choices)
 	{
 		if (!c.selected)
 			continue;
@@ -97,7 +363,7 @@ std::vector<Installer::PackageSummary> Installer::packageSummaries()
 		{
 			DistributionXml::PkgRef ref;
 			
-			if (!distribution.package(pkgId, ref))
+			if (!m_distribution->package(pkgId, ref))
 				throw std::runtime_error("Cannot find <pkg-ref> with id '" + pkgId + "'");
 			if (!ref.active)
 				continue;
@@ -117,26 +383,20 @@ std::vector<Installer::PackageSummary> Installer::packageSummaries()
 
 void Installer::installPackage()
 {
-	std::shared_ptr<Reader> distributionFile;
-	
 	if (m_target.empty())
 		throw std::runtime_error("Must specify -target");
 	
 	// If "Distribution" file exists, then read it and find out choices enabled by default (normally located in subdirectories)
 	// If no "Distribution" file exists, then there are no subdirectories and we proceed with installation
-	if (Reader* distr = m_xar->openFile("Distribution"))
+	loadChoices();
+	if (m_distribution)
 	{
-		std::unique_ptr<DistributionXml> distribution;
-		std::vector<DistributionXml::Choice> choices;
-		
-		distributionFile.reset(distr);
-		distribution.reset(new DistributionXml(distributionFile));
+		const std::shared_ptr<DistributionXml>& distribution = m_distribution;
 		
 		std::cout << "installer: Package name is " << distribution->title() << std::endl;
 		std::cout << "installer: Installing at base path " << m_target << std::endl;
 		
-		choices = distribution->choices();
-		for (const DistributionXml::Choice& c : choices)
+		for (const DistributionXml::Choice& c : m_choices)
 		{
 			if (!c.selected)
 				continue;
@@ -148,6 +408,8 @@ void Installer::installPackage()
 			
 			for (const std::string& attr : c.unevaluated)
 			{
+				if (attr.find("selected") == std::string::npos)
+					continue; // enabled/visible only matter to a user interface
 				std::cout << "installer: Warning: choice " << choiceTitle << ": the JavaScript in '" << attr
 						<< "' is not evaluated; treating the choice as selected\n";
 			}

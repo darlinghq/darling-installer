@@ -8,6 +8,7 @@
 #include <vector>
 #include <sys/mount.h>
 #include "pkg/Installer.h"
+#include "pkg/ChoicesXml.h"
 
 namespace
 {
@@ -22,7 +23,9 @@ namespace
 		OPT_PKG = 1000, OPT_TARGET, OPT_VOLINFO, OPT_DOMINFO, OPT_PKGINFO, OPT_ALLOW_UNTRUSTED,
 		OPT_VERS, OPT_HELP, OPT_VERBOSE, OPT_VERBOSER, OPT_PLIST, OPT_DUMPLOG, OPT_LANG,
 		// accepted so that they can be reported as unsupported instead of as unknown
-		OPT_FILE, OPT_CONFIG, OPT_QUERY, OPT_LISTISO, OPT_SHOW_CHOICES, OPT_APPLY_CHOICES, OPT_SHOW_CHOICES_AFTER,
+		OPT_FILE, OPT_CONFIG, OPT_QUERY, OPT_LISTISO,
+		OPT_SHOW_CHOICES, OPT_APPLY_CHOICES, OPT_SHOW_CHOICES_AFTER,
+		OPT_SHOW_CHOICE_CHANGES,
 	};
 
 	const struct option kOptions[] = {
@@ -46,6 +49,7 @@ namespace
 		{ "query", required_argument, nullptr, OPT_QUERY },
 		{ "listiso", no_argument, nullptr, OPT_LISTISO },
 		{ "showChoicesXML", no_argument, nullptr, OPT_SHOW_CHOICES },
+		{ "showChoiceChangesXML", no_argument, nullptr, OPT_SHOW_CHOICE_CHANGES },
 		{ "applyChoiceChangesXML", required_argument, nullptr, OPT_APPLY_CHOICES },
 		{ "showChoicesAfterApplyingChangesXML", required_argument, nullptr, OPT_SHOW_CHOICES_AFTER },
 		{ nullptr, 0, nullptr, 0 }
@@ -90,6 +94,13 @@ namespace
 			"    [-allowUntrusted] Accepted; package signatures are not checked.\n"
 			"    [-dumplog]        Accepted.\n"
 			"    [-lang <code>]    Accepted; only meaningful for system installs.\n"
+			"    [-showChoicesXML] Print the install choices of the package as XML.\n"
+			"    [-showChoiceChangesXML]\n"
+			"                      Print the choice states as a choice changes file.\n"
+			"    [-applyChoiceChangesXML <file>]\n"
+			"                      Apply a choice changes file before installing.\n"
+			"    [-showChoicesAfterApplyingChangesXML <file>]\n"
+			"                      Print the choice states after applying the file (needs -target).\n"
 			"    [-vers]           Display the version of this tool.\n"
 			"    [-help]           Display this help.\n"
 			"\n"
@@ -265,6 +276,15 @@ namespace
 		}
 	}
 
+	std::vector<ChoiceChange> readChanges(const char* path)
+	{
+		std::vector<ChoiceChange> changes;
+		
+		if (!readChoiceChanges(path, changes))
+			throw std::runtime_error(std::string("choices file '") + path + "' either could not be found or was malformed.");
+		return changes;
+	}
+
 	[[noreturn]] void unsupported(const char* option)
 	{
 		throw std::runtime_error(std::string("Option -") + option + " is not supported");
@@ -275,6 +295,9 @@ int main_installer(int argc, char** argv)
 {
 	const char* pkg = nullptr;
 	const char* target = nullptr;
+	const char* applyChanges = nullptr;
+	const char* showAfterChanges = nullptr;
+	bool showChoices = false, showChoiceChanges = false;
 	bool volinfo = false, dominfo = false, pkginfo = false;
 	bool verboseR = false;
 	Output out;
@@ -318,9 +341,10 @@ int main_installer(int argc, char** argv)
 				case OPT_CONFIG: unsupported("config");
 				case OPT_QUERY: unsupported("query");
 				case OPT_LISTISO: unsupported("listiso");
-				case OPT_SHOW_CHOICES: unsupported("showChoicesXML");
-				case OPT_APPLY_CHOICES: unsupported("applyChoiceChangesXML");
-				case OPT_SHOW_CHOICES_AFTER: unsupported("showChoicesAfterApplyingChangesXML");
+				case OPT_SHOW_CHOICES: showChoices = true; break;
+				case OPT_SHOW_CHOICE_CHANGES: showChoiceChanges = true; break;
+				case OPT_APPLY_CHOICES: applyChanges = optarg; break;
+				case OPT_SHOW_CHOICES_AFTER: showAfterChanges = optarg; break;
 				default:
 					// '?': unknown option or missing argument
 					throw UsageError(std::string("invalid option ") + argv[optind - 1]);
@@ -335,7 +359,21 @@ int main_installer(int argc, char** argv)
 		if (int(volinfo) + int(dominfo) + int(pkginfo) > 1)
 			throw std::runtime_error("Cannot specify -volinfo, -dominfo or -pkginfo at the same time");
 
-		if (volinfo || dominfo || pkginfo)
+		if (showChoices || showChoiceChanges || showAfterChanges != nullptr)
+		{
+			if (showAfterChanges != nullptr && target == nullptr)
+				throw UsageError("Error -target parameter required");
+			
+			Installer installer(pkg, target);
+			
+			if (showAfterChanges != nullptr)
+				installer.applyChoiceChanges(readChanges(showAfterChanges));
+			if (showChoices)
+				installer.printChoicesXML(std::cout);
+			else
+				installer.printChoiceChanges(std::cout);
+		}
+		else if (volinfo || dominfo || pkginfo)
 		{
 			Installer installer(pkg);
 
@@ -355,6 +393,8 @@ int main_installer(int argc, char** argv)
 
 			if (verboseR)
 				installer.enableVerboseR();
+			if (applyChanges != nullptr)
+				installer.applyChoiceChanges(readChanges(applyChanges));
 
 			installer.installPackage();
 		}

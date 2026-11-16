@@ -18,7 +18,8 @@ public:
 	struct Choice
 	{
 		bool selected; // initially selected, i.e. to be installed
-		// bool enabled; // whether the user can manipulate the selected status
+		bool enabled = true; // whether the user can manipulate the selected status
+		bool visible = true;
 		std::string id, title;
 		std::vector<std::string> pkgref;
 		// Attributes holding a JavaScript expression, which is not evaluated;
@@ -36,6 +37,14 @@ public:
 	// Domains the package enables: LocalSystem, CurrentUserHomeDirectory
 	std::vector<std::string> domains() const;
 	std::vector<Choice> choices() const;
+	
+	// The <choices-outline> tree: each line names a choice, child lines are its subchoices
+	struct Line
+	{
+		std::string choice;
+		std::vector<Line> children;
+	};
+	std::vector<Line> outline() const;
 	bool package(const std::string& id, PkgRef& pkg) const;
 private:
 	mutable xmlDocPtr m_doc;

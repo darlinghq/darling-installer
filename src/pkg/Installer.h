@@ -8,6 +8,9 @@
 #include "archive/XARArchive.h"
 #include "PackageInfoXml.h"
 #include "bom/BOMStore.h"
+#include "DistributionXml.h"
+#include "ChoicesXml.h"
+#include <iosfwd>
 
 class Installer
 {
@@ -23,12 +26,25 @@ public:
 	};
 	// The packages installPackage() would install (all subpackages of a metapackage)
 	std::vector<PackageSummary> packageSummaries();
+	// Install choices (a Distribution): the changes file is described in installer(8)
+	void applyChoiceChanges(const std::vector<ChoiceChange>& changes);
+	void printChoicesXML(std::ostream& out);
+	void printChoiceChanges(std::ostream& out);
+	
 	// Domains the package can be installed into, as accepted by -target
 	std::vector<std::string> domains();
 	
 	void installPackage();
 	void enableVerboseR() { m_verboseR = true; }
 private:
+	void loadChoices();
+	const DistributionXml::Choice* findChoice(const std::string& id) const;
+	int selectionState(const DistributionXml::Line& line) const;
+	int selectionState(const std::vector<DistributionXml::Line>& lines) const;
+	void printLine(std::ostream& out, int depth, const DistributionXml::Line& line) const;
+	void printChoice(std::ostream& out, int depth, const std::string& id, const std::string& title,
+			bool enabled, bool visible, int selected, size_t kbytes, const std::vector<std::string>& packages,
+			const std::vector<DistributionXml::Line>& children) const;
 	std::shared_ptr<PackageInfoXml> loadPackageInfo();
 	void mkParentDirs(const char *fileName, mode_t mode);
 	void extractPayload(const char* payloadFileName, std::string destinationDir);
@@ -60,6 +76,9 @@ private:
 	std::string m_scriptsDir, m_installLocation;
 
 	bool m_verboseR = false;
+	bool m_choicesLoaded = false;
+	std::shared_ptr<DistributionXml> m_distribution; // null for a package without Distribution
+	std::vector<DistributionXml::Choice> m_choices;
 };
 
 #endif /* INSTALLER_H */
