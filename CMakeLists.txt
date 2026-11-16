@@ -18,7 +18,8 @@ include_directories(
 include(darling_exe)
 include(InstallSymlink)
 
-add_darling_executable(installer
+# What both the command line tools and the Installer application are built from
+set(INSTALLER_ENGINE_SOURCES
 	src/archive/FileReader.cpp
 	src/archive/XARArchive.cpp
 	src/archive/SubReader.cpp
@@ -38,6 +39,10 @@ add_darling_executable(installer
 	src/pkg/InstallerDelegate.cpp
 	src/pkg/Volumes.cpp
 	src/pkg/Uninstaller.cpp
+)
+
+add_darling_executable(installer
+	${INSTALLER_ENGINE_SOURCES}
 	src/main.cpp
 	src/main-lsbom.cpp
 	src/main-installer.cpp
@@ -55,3 +60,33 @@ InstallSymlink(installer libexec/darling/usr/bin/pkgutil)
 InstallSymlink(../bin/installer libexec/darling/usr/sbin/installer)
 
 install(FILES installer.8 DESTINATION libexec/darling/usr/share/man/man8)
+
+# Installer.app: a window for the same engine. It registers itself for .pkg and .mpkg files
+# (CFBundleDocumentTypes in its Info.plist), so LaunchServices opens packages with it.
+# Unlike on macOS it is built from the installer's own sources, not from PackageKit.
+if (COMPONENT_gui)
+	add_darling_executable(InstallerApp
+		${INSTALLER_ENGINE_SOURCES}
+		src/app/main.m
+		src/app/InstallerAppDelegate.m
+		src/app/InstallerWindowController.mm
+		src/app/HTMLText.m
+	)
+	set_target_properties(InstallerApp PROPERTIES OUTPUT_NAME Installer)
+	set_source_files_properties(
+		src/app/main.m
+		src/app/InstallerAppDelegate.m
+		src/app/InstallerWindowController.mm
+		src/app/HTMLText.m
+		PROPERTIES COMPILE_FLAGS -fobjc-arc)
+	target_link_libraries(InstallerApp z lzma bz2 xml2 cxx AppKit CoreFoundation Foundation objc)
+
+	set(Installer_contents "libexec/darling/System/Library/CoreServices/Installer.app/Contents")
+	file(WRITE ${CMAKE_CURRENT_BINARY_DIR}/PkgInfo "APPLinst")
+	install(TARGETS InstallerApp RUNTIME DESTINATION ${Installer_contents}/MacOS)
+	install(FILES
+			${CMAKE_CURRENT_SOURCE_DIR}/src/app/Info-Installer.plist
+		DESTINATION ${Installer_contents}
+		RENAME Info.plist)
+	install(FILES ${CMAKE_CURRENT_BINARY_DIR}/PkgInfo DESTINATION ${Installer_contents})
+endif()
