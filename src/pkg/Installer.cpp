@@ -595,6 +595,11 @@ void Installer::printLine(std::ostream& out, int depth, const DistributionXml::L
 			selectionState(line), kbytes, packages, line.children);
 }
 
+// QUIRK: the hierarchy is wrapped in a root choice named __ROOT_CHOICE_IDENT_<title> whose selection
+// is -1 when its subchoices differ (1 all, 0 none); a choice's size is the sum of its active
+// packages; package paths are file://localhost URLs with the subpackage as the fragment.
+// Not documented. Evidence: black-box observation on macOS 26.7.3 (tier 2).
+// Tests: "-showChoicesXML: root choice with mixed selection", "-showChoicesXML: a leaf choice"
 void Installer::printChoicesXML(std::ostream& out)
 {
 	loadChoices();
@@ -623,6 +628,11 @@ static void collectLines(const std::vector<DistributionXml::Line>& lines, std::v
 	}
 }
 
+// QUIRK: -showChoiceChangesXML and -showChoicesAfterApplyingChangesXML list visible, enabled and
+// selected (in that order, selected as 0/1, the others as booleans) for each choice, and a
+// change naming an unknown choice is ignored without an error. -showChoiceChangesXML is not in
+// the tool's -help. Evidence: black-box observation on macOS 26.7.3 (tier 2).
+// Tests: "-showChoiceChangesXML: visible, enabled and selected per choice", "-showChoicesAfterApplyingChangesXML with a dict file"
 void Installer::printChoiceChanges(std::ostream& out)
 {
 	loadChoices();

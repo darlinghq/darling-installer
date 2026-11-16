@@ -12,7 +12,12 @@
 
 namespace
 {
-	// Wrong command line: print the usage text and exit with 255
+	// QUIRK: a wrong command line (no arguments, an unknown option, a missing -pkg or -target where
+	// one is required) prints the usage text and exits with status 255; other failures exit with 1.
+	// The messages ("installer: invalid option -x", "installer: Error a package must be specified.",
+	// "installer: Error -target parameter required") are as observed. Not documented. Evidence:
+	// black-box observation on macOS 26.7.3 (tier 2).
+	// Tests: "unknown option: exit status 255", "a missing -target is reported", "bad target: exit status 1"
 	struct UsageError : std::runtime_error
 	{
 		using std::runtime_error::runtime_error;
@@ -196,6 +201,10 @@ namespace
 		return rv;
 	}
 
+	// QUIRK: -dominfo prints nothing (plain), an empty array (-plist) or "NoDomainsAvailable"
+	// (-verbose) for a package that enables no domains, instead of always listing LocalSystem.
+	// Not documented. Evidence: black-box observation on macOS 26.7.3 (tier 2).
+	// Test: "-dominfo lists nothing for a package without domains"
 	void printDomains(const std::vector<std::string>& domains, const Output& out)
 	{
 		if (out.plist)

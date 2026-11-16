@@ -421,6 +421,9 @@ std::unique_ptr<ChoiceScript> ChoiceScript::create(const std::string& targetMoun
 		// The package carries no localized strings that could be looked up, so every key is missing
 		"  localizedString: function (key) { return null; },\n"
 		"  localizedStringWithFormat: function (key) { return null; },\n"
+		// QUIRK: system.env is an object holding the environment variables (system.env.HOME is a
+		// string, system.env('HOME') fails). Undocumented. Evidence: black-box observation on
+		// macOS 26.7.3 (tier 2). Test: "system.sysctl, system.env, my.target and choices are available to conditions"
 		"  env: " + environment() + ",\n"
 		"  applications: { fromIdentifier: function (identifier) { return []; } },\n"
 		"  run: __run,\n"
@@ -463,7 +466,10 @@ void ChoiceScript::setChoices(const std::vector<ChoiceState>& choices)
 	for (size_t i = 0; i < choices.size(); i++)
 	{
 		const ChoiceState& c = choices[i];
-		// 1 and 0, not booleans: the Installer's values compare equal to true/false but are not of type boolean
+		// QUIRK: choices.<id>.selected/enabled/visible compare equal to true and false but are not of
+		// type boolean (the documentation says Boolean); exposed here as 1 and 0. Evidence: black-box
+		// observation on macOS 26.7.3 (tier 2): typeof is not 'boolean' while == true holds.
+		// Test: "system.sysctl, system.env, my.target and choices are available to conditions"
 		source += (i ? "," : "") + quote(c.id) + ":{selected:" + (c.selected ? "1" : "0")
 				+ ",enabled:" + (c.enabled ? "1" : "0") + ",visible:" + (c.visible ? "1" : "0")
 				+ ",title:" + quote(c.title) + ",description:" + quote(c.description)
@@ -482,7 +488,10 @@ bool ChoiceScript::evaluate(const std::string& expression, bool& result, std::st
 
 	if (!m_impl->run("(" + expression + "\n)", &value, error))
 		return false;
-	// Only the boolean true counts; any other value (a string, a number) is false
+	// QUIRK: only the boolean true selects; a string or a number gives false, not its JavaScript
+	// truthiness. Not documented. Evidence: black-box observation on macOS 26.7.3 (tier 2),
+	// a choice with selected="'abc'" was deselected, one with selected="0" too.
+	// Test: "a condition that is not a boolean is false (observed on macOS)"
 	result = m_impl->api->ValueIsBoolean(m_impl->ctx, value) && m_impl->api->ValueToBoolean(m_impl->ctx, value);
 	return true;
 }
