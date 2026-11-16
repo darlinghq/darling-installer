@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <sys/types.h>
+#include <sys/stat.h>
 #include "archive/XARArchive.h"
 #include "PackageInfoXml.h"
 #include "bom/BOMStore.h"
@@ -23,7 +24,10 @@ private:
 	std::string getInstallLocation();
 	void uninstall(std::shared_ptr<BOMStore> bom, const char* prefix);
 	static void removeDirectory(const char* dir);
-	static void extractFile(std::shared_ptr<Reader> reader, const char* dest);
+	static void extractFile(std::shared_ptr<Reader> reader, const char* dest, const struct stat* st = nullptr);
+	static bool isSafeArchivePath(const std::string& name);
+	static void applyOwner(const char* path, const struct stat& st, int flags);
+	static void applyMtime(const char* path, const struct stat& st, int flags);
 	
 	void runInstallStepScript(const char* scriptName);
 	int runScript(const char* scriptName, const char* scriptTempDir, const char* installLocation);

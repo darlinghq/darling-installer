@@ -209,23 +209,27 @@ void Installer::extractPayload(const char* payloadFileName, std::string destinat
 	{
 		// The final path is a concatenation of target, pkgInfo->installLocation()
 		// and name.
+		if (!isSafeArchivePath(name))
+			throw std::runtime_error("Refusing to install payload entry outside the destination: " + name);
+
 		path.resize(basePathLen);
 		path += name;
 		
-		// std::cout << path << std::endl;
-
 		mkParentDirs(path.c_str(), st.st_mode & 0777);
 
 		if (S_ISDIR(st.st_mode))
 		{
-			if (::mkdir(path.c_str(), st.st_mode & 0777) != 0)
+			if (::mkdir(path.c_str(), st.st_mode & 0777) == 0)
 			{
-				if (errno != EEXIST)
-				{
-					std::stringstream ss;
-					ss << "Cannot mkdir " << path << ": " << strerror(errno);
-					throw std::runtime_error(ss.str());
-				}
+				// Only directories created by this package get its ownership;
+				// pre-existing ones (/usr, /Applications...) are left alone.
+				applyOwner(path.c_str(), st, -1);
+			}
+			else if (errno != EEXIST)
+			{
+				std::stringstream ss;
+				ss << "Cannot mkdir " << path << ": " << strerror(errno);
+				throw std::runtime_error(ss.str());
 			}
 		}
 		else if (S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode))
@@ -235,29 +239,68 @@ void Installer::extractPayload(const char* payloadFileName, std::string destinat
 		}
 		else if (S_ISLNK(st.st_mode))
 		{
-			char target[256];
-			int rd;
+			// The link target is the entry's data; it is not limited in length.
+			std::string target(st.st_size, '\0');
 			
-			rd = cpioFile->read(target, sizeof(target)-1, 0);
-			target[rd] = '\0';
+			if (st.st_size == 0 || cpioFile->read(&target[0], st.st_size, 0) != st.st_size)
+				throw std::runtime_error("Cannot read the symlink target of " + path);
 			
 			::unlink(path.c_str());
-			if (::symlink(target, path.c_str()) != 0)
+			if (::symlink(target.c_str(), path.c_str()) != 0)
 			{
 				std::stringstream ss;
 				ss << "Cannot create symlink " << path << ": " << strerror(errno);
 				throw std::runtime_error(ss.str());
 			}
+			applyOwner(path.c_str(), st, AT_SYMLINK_NOFOLLOW);
+			applyMtime(path.c_str(), st, AT_SYMLINK_NOFOLLOW);
 		}
 		else
 		{
-			extractFile(cpioFile, path.c_str());
-			::chmod(path.c_str(), st.st_mode);
+			extractFile(cpioFile, path.c_str(), &st);
+			applyMtime(path.c_str(), st, 0);
 		}
 	}
 }
 
-void Installer::extractFile(std::shared_ptr<Reader> reader, const char* dest)
+bool Installer::isSafeArchivePath(const std::string& name)
+{
+	// A payload entry is relative to the destination directory, so no
+	// component may climb out of it.
+	size_t pos = 0;
+	
+	while (pos <= name.length())
+	{
+		size_t end = name.find('/', pos);
+		if (end == std::string::npos)
+			end = name.length();
+		if (name.compare(pos, end - pos, "..") == 0)
+			return false;
+		pos = end + 1;
+	}
+	return true;
+}
+
+void Installer::applyOwner(const char* path, const struct stat& st, int flags)
+{
+	// Changing ownership is only possible for root; a normal user keeps the
+	// files it extracts.
+	if (geteuid() != 0)
+		return;
+	if (::fchownat(AT_FDCWD, path, st.st_uid, st.st_gid, flags) != 0)
+		std::cerr << "installer: Warning: cannot set the owner of " << path << ": " << strerror(errno) << std::endl;
+}
+
+void Installer::applyMtime(const char* path, const struct stat& st, int flags)
+{
+	struct timespec times[2];
+	
+	times[0].tv_sec = times[1].tv_sec = st.st_mtime;
+	times[0].tv_nsec = times[1].tv_nsec = 0;
+	::utimensat(AT_FDCWD, path, times, flags);
+}
+
+void Installer::extractFile(std::shared_ptr<Reader> reader, const char* dest, const struct stat* st)
 {
 	std::unique_ptr<char[]> buf(new char[4096]);
 	uint64_t length, done = 0;
@@ -265,7 +308,8 @@ void Installer::extractFile(std::shared_ptr<Reader> reader, const char* dest)
 
 	::unlink(dest);
 
-	fd = ::open(dest, O_CREAT|O_WRONLY, 0600);
+	// O_EXCL|O_NOFOLLOW: never write through a link that appeared at this path
+	fd = ::open(dest, O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW, 0600);
 	if (fd == -1)
 	{
 		std::stringstream ss;
@@ -294,6 +338,14 @@ void Installer::extractFile(std::shared_ptr<Reader> reader, const char* dest)
 		}
 
 		done += rd;
+	}
+
+	if (st != nullptr)
+	{
+		// The owner goes first: changing it clears setuid/setgid bits.
+		if (geteuid() == 0 && ::fchown(fd, st->st_uid, st->st_gid) != 0)
+			std::cerr << "installer: Warning: cannot set the owner of " << dest << ": " << strerror(errno) << std::endl;
+		::fchmod(fd, st->st_mode & 07777);
 	}
 
 	::close(fd);
@@ -562,11 +614,7 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 			// problem running the script
 			std::stringstream ss;
 			ss << "Cannot run script " << scriptName << ": " << strerror(err);
-			
-			// Since we don't have /usr/bin/perl yet, we ignore errors like this one.
-			std::cerr << ss.str() << std::endl;
-			// throw std::runtime_error(ss.str());
-			return 0;
+			throw std::runtime_error(ss.str());
 		}
 		else
 		{
