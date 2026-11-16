@@ -1,5 +1,6 @@
 #ifndef CHOICESCRIPT_H
 #define CHOICESCRIPT_H
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -10,7 +11,7 @@
 //
 // The script sees the Installer JavaScript objects (documented as "Installer JS"):
 // `system` (version, compareVersions, files.fileExistsAtPath/plistAtPath/
-// bundleAtPath, sysctl, env, propertiesOf, localizedString, applications.
+// bundleAtPath, run, runOnce, sysctl, env, propertiesOf, localizedString, applications.
 // fromIdentifier, log), `my` (target.mountpoint/systemVersion/availableKilobytes,
 // result.type/message/title) and `choices` (<id>.selected/enabled/visible/title/
 // description/packages/packageUpgradeAction).
@@ -38,6 +39,11 @@ public:
 	bool addScript(const std::string& source, std::string& error);
 	// The state `choices.<id>` reports from now on
 	void setChoices(const std::vector<ChoiceState>& choices);
+	// How system.run launches a program: it gets the program name and arguments and
+	// returns whether it ran, with the exit code. If not set, or it returns false,
+	// system.run and runOnce return undefined (the program was not executed).
+	typedef std::function<bool(const std::string& program, const std::vector<std::string>& args, int& exitCode)> Runner;
+	void setRunner(const Runner& runner);
 	// Evaluates an expression; only the boolean true gives true
 	bool evaluate(const std::string& expression, bool& result, std::string& error);
 	// my.result.type / my.result.message as set by the last scripts

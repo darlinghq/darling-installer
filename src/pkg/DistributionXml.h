@@ -43,6 +43,8 @@ public:
 	// Domains the package enables: LocalSystem, CurrentUserHomeDirectory
 	std::vector<std::string> domains() const;
 	
+	// <options allow-external-scripts>: whether system.run/runOnce may launch programs
+	bool allowExternalScripts() const;
 	// Text of the <script> elements, which define functions for the expressions
 	std::vector<std::string> scripts() const;
 	// The script expression of <installation-check> and <volume-check>; empty if absent

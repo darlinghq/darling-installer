@@ -14,6 +14,8 @@ public:
 	virtual Reader* openFile(const std::string& path) override;
 	virtual std::vector<std::string> listFiles() override;
 	bool containsFile(const std::string& path);
+	// The permission bits recorded for a file; false if the archive has none for it
+	bool fileMode(const std::string& path, unsigned& mode);
 private:
 	std::string xpathForPath(const std::string& path);
 	Reader* openFile(xmlNodeSetPtr nodes);

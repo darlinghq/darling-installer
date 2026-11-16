@@ -297,6 +297,13 @@ static std::string checkScript(xmlXPathContextPtr context, const char* xpath)
 	return rv;
 }
 
+bool DistributionXml::allowExternalScripts() const
+{
+	std::string v = checkScript(m_context, "string(/*/options/@allow-external-scripts)");
+	// the schema reference says true/false, the system.run page says 'yes'
+	return v == "true" || v == "yes";
+}
+
 std::string DistributionXml::installationCheck() const
 {
 	return checkScript(m_context, "string(/*/installation-check/@script)");

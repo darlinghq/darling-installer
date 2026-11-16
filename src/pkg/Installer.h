@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include <set>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include "archive/XARArchive.h"
@@ -18,6 +19,7 @@ class Installer
 public:
 	// target may be null when the package is only inspected
 	Installer(const char* pkg, const char* target = nullptr);
+	~Installer();
 	
 	struct PackageSummary
 	{
@@ -44,6 +46,9 @@ private:
 	std::vector<ChoiceScript::ChoiceState> choiceStates();
 	bool isPackageActive(const std::string& pkgId, const DistributionXml::PkgRef& ref);
 	void runChecks();
+	bool runResource(const std::string& program, const std::vector<std::string>& args, int& exitCode);
+	bool confirmExternalProgram(const std::string& program, const std::vector<std::string>& args);
+	bool extractResources();
 	const DistributionXml::Choice* findChoice(const std::string& id) const;
 	int selectionState(const DistributionXml::Line& line) const;
 	int selectionState(const std::vector<DistributionXml::Line>& lines) const;
@@ -87,6 +92,9 @@ private:
 	std::vector<DistributionXml::Choice> m_choices;
 	std::unique_ptr<ChoiceScript> m_script; // null without JavaScriptCore
 	bool m_scriptTried = false;
+	bool m_installing = false; // an installation, not an information query
+	std::string m_resourcesDir; // the package's Resources, extracted for system.run
+	std::set<std::string> m_allowedPrograms; // programs the user agreed to run
 };
 
 #endif /* INSTALLER_H */

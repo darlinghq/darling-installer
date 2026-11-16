@@ -76,6 +76,12 @@ ChoiceScript* Installer::script()
 	{
 		m_scriptTried = true;
 		m_script = ChoiceScript::create(m_target.empty() ? "/" : m_target);
+		if (m_script)
+		{
+			m_script->setRunner([this](const std::string& program, const std::vector<std::string>& args, int& exitCode) {
+				return runResource(program, args, exitCode);
+			});
+		}
 		
 		if (m_script && m_distribution)
 		{
@@ -237,6 +243,135 @@ bool Installer::isPackageActive(const std::string& pkgId, const DistributionXml:
 	std::cout << "installer: Warning: package " << pkgId << ": the JavaScript in 'active' is not evaluated"
 			<< (error.empty() ? " (JavaScriptCore is not available)" : " (" + error + ")") << "; treating the package as active\n";
 	return ref.active;
+}
+
+// The user is asked before a package runs one of its programs; only a terminal can be asked
+bool Installer::confirmExternalProgram(const std::string& program, const std::vector<std::string>& args)
+{
+	std::string command = program;
+	for (const std::string& a : args)
+		command += " " + a;
+	
+	if (!isatty(STDIN_FILENO) || !isatty(STDERR_FILENO))
+	{
+		std::cerr << "installer: Warning: the package wants to run '" << command
+				<< "', which needs your confirmation on a terminal; not running it\n";
+		return false;
+	}
+	
+	std::cerr << "installer: The package wants to run the program '" << command
+			<< "' with the privileges of this installer. Allow? [y/N] " << std::flush;
+	
+	char answer[16];
+	if (fgets(answer, sizeof(answer), stdin) == nullptr)
+		return false;
+	return answer[0] == 'y' || answer[0] == 'Y';
+}
+
+// The Resources directory of the package, extracted to a temporary directory
+bool Installer::extractResources()
+{
+	if (!m_resourcesDir.empty())
+		return true;
+	
+	char dir[] = "/tmp/installerResourcesXXXXXX";
+	if (!mkdtemp(dir))
+		return false;
+	m_resourcesDir = dir;
+	
+	for (const std::string& path : m_xar->listFiles())
+	{
+		if (path.compare(0, 10, "Resources/") != 0)
+			continue;
+		
+		std::string dest = m_resourcesDir + "/" + path.substr(10);
+		unsigned mode;
+		
+		if (!isSafeArchivePath(path))
+			continue;
+		mkParentDirs(dest.c_str(), 0755);
+		
+		std::shared_ptr<Reader> file(m_xar->openFile(path));
+		if (!file)
+			continue;
+		extractFile(file, dest.c_str(), nullptr);
+		::chmod(dest.c_str(), m_xar->fileMode(path, mode) ? (mode & 0777) : 0644);
+	}
+	return true;
+}
+
+// system.run/runOnce: launch a program of the package's Resources directory. Returns
+// false if it was not executed: during an information query, without allow-external-scripts,
+// or when the user does not agree.
+bool Installer::runResource(const std::string& program, const std::vector<std::string>& args, int& exitCode)
+{
+	if (!m_installing)
+		return false;
+	
+	if (program.empty() || program[0] == '/' || !isSafeArchivePath(program))
+	{
+		std::cerr << "installer: Warning: refusing to run '" << program << "': not a program of the package's Resources\n";
+		return false;
+	}
+	if (!m_distribution || !m_distribution->allowExternalScripts())
+	{
+		std::cerr << "installer: Warning: the package runs '" << program << "', but allow-external-scripts is not enabled\n";
+		return false;
+	}
+	if (m_allowedPrograms.count(program) == 0)
+	{
+		if (!confirmExternalProgram(program, args))
+			return false;
+		m_allowedPrograms.insert(program);
+	}
+	if (!extractResources())
+		return false;
+	
+	std::vector<std::string> argvStrings = { m_resourcesDir + "/" + program };
+	argvStrings.insert(argvStrings.end(), args.begin(), args.end());
+	std::vector<char*> argv;
+	for (std::string& a : argvStrings)
+		argv.push_back(&a[0]);
+	argv.push_back(nullptr);
+	
+	int pipes[2];
+	if (pipe(pipes) != 0)
+		return false;
+	std::cout << std::flush;
+	
+	pid_t pid = fork();
+	if (pid == 0)
+	{
+		close(pipes[0]);
+		fcntl(pipes[1], F_SETFD, FD_CLOEXEC);
+		
+		chdir(m_resourcesDir.c_str());
+		setenv("COMMAND_LINE_INSTALL", "1", 1);
+		setenv("PACKAGE_PATH", m_pkg, 1);
+		setenv("DSTVOLUME", m_target.c_str(), 1);
+		setenv("INSTALLER_TEMP", m_resourcesDir.c_str(), 1);
+		
+		execv(argv[0], argv.data());
+		int err = errno;
+		write(pipes[1], &err, sizeof(err));
+		_exit(127);
+	}
+	
+	close(pipes[1]);
+	int err = 0, status = 0;
+	ssize_t rd = (pid > 0) ? read(pipes[0], &err, sizeof(err)) : 0;
+	close(pipes[0]);
+	if (pid < 0)
+		return false;
+	waitpid(pid, &status, 0);
+	
+	if (rd > 0)
+	{
+		std::cerr << "installer: Warning: cannot run '" << program << "': " << strerror(err) << "\n";
+		return false;
+	}
+	exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+	return true;
 }
 
 // <installation-check> and <volume-check>: a script returning false stops the
@@ -528,6 +663,12 @@ void Installer::printChoiceChanges(std::ostream& out)
 	out << "</array>\n</plist>\n";
 }
 
+Installer::~Installer()
+{
+	if (!m_resourcesDir.empty())
+		removeDirectory(m_resourcesDir.c_str());
+}
+
 static std::string stripPackageSuffix(std::string name)
 {
 	size_t slash = name.rfind('/');
@@ -593,6 +734,7 @@ void Installer::installPackage()
 {
 	if (m_target.empty())
 		throw std::runtime_error("Must specify -target");
+	m_installing = true;
 	
 	// If "Distribution" file exists, then read it and find out choices enabled by default (normally located in subdirectories)
 	// If no "Distribution" file exists, then there are no subdirectories and we proceed with installation

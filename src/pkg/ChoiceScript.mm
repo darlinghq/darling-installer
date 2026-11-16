@@ -215,6 +215,9 @@ namespace
 		return value;
 	}
 
+	// The script context the natives below belong to (the C API has no per-function data)
+	const ChoiceScript::Runner* g_runner = nullptr;
+
 	JSValueRef jsonString(JSContextRef ctx, const std::string& json)
 	{
 		const JSApi* api = loadApi();
@@ -236,6 +239,25 @@ namespace
 	JSValueRef bundleJSON(JSContextRef ctx, JSObjectRef, JSObjectRef, size_t argc, const JSValueRef args[], JSValueRef* exception)
 	{
 		return jsonString(ctx, plistAsJSON(stringArgument(ctx, args, argc, exception), true));
+	}
+
+	// __run(program, args...): the exit code, or undefined if the program was not executed
+	JSValueRef runProgram(JSContextRef ctx, JSObjectRef, JSObjectRef, size_t argc, const JSValueRef args[], JSValueRef* exception)
+	{
+		const JSApi* api = loadApi();
+		std::vector<std::string> strings;
+		int exitCode = 0;
+
+		for (size_t i = 0; i < argc; i++)
+			strings.push_back(stringArgument(ctx, args + i, 1, exception));
+		if (strings.empty() || g_runner == nullptr || !*g_runner)
+			return api->ValueMakeUndefined(ctx);
+
+		std::string program = strings[0];
+		strings.erase(strings.begin());
+		if (!(*g_runner)(program, strings, exitCode))
+			return api->ValueMakeUndefined(ctx);
+		return api->ValueMakeNumber(ctx, exitCode);
 	}
 
 	// system.log(string): an Installer log entry with the JS: prefix
@@ -286,6 +308,7 @@ namespace
 struct ChoiceScript::Impl
 {
 	const JSApi* api;
+	Runner runner;
 	JSGlobalContextRef ctx = nullptr;
 
 	// Returns false and the exception text if the script throws
@@ -336,6 +359,8 @@ ChoiceScript::ChoiceScript() : m_impl(new Impl) {}
 
 ChoiceScript::~ChoiceScript()
 {
+	if (g_runner == &m_impl->runner)
+		g_runner = nullptr;
 	if (m_impl && m_impl->ctx)
 		m_impl->api->GlobalContextRelease(m_impl->ctx);
 }
@@ -359,6 +384,7 @@ std::unique_ptr<ChoiceScript> ChoiceScript::create(const std::string& targetMoun
 		{ "__plistJSON", plistJSON },
 		{ "__bundleJSON", bundleJSON },
 		{ "__log", logEntry },
+		{ "__run", runProgram },
 	};
 	for (const auto& native : natives)
 	{
@@ -374,6 +400,7 @@ std::unique_ptr<ChoiceScript> ChoiceScript::create(const std::string& targetMoun
 		availableKilobytes = (double) fs.f_bavail * fs.f_bsize / 1024;
 
 	std::string setup =
+		"var __ran = {};\n"
 		"var system = {\n"
 		"  version: " + systemVersion("/") + ",\n"
 		"  compareVersions: function (a, b) {\n"
@@ -396,6 +423,15 @@ std::unique_ptr<ChoiceScript> ChoiceScript::create(const std::string& targetMoun
 		"  localizedStringWithFormat: function (key) { return null; },\n"
 		"  env: " + environment() + ",\n"
 		"  applications: { fromIdentifier: function (identifier) { return []; } },\n"
+		"  run: __run,\n"
+		// the same arguments run once; later calls return the first exit code
+		"  runOnce: function () {\n"
+		"    var key = JSON.stringify(Array.prototype.slice.call(arguments));\n"
+		"    if (key in __ran) return __ran[key];\n"
+		"    var code = __run.apply(null, arguments);\n"
+		"    if (code !== undefined) __ran[key] = code;\n"
+		"    return code;\n"
+		"  },\n"
 		"  log: __log\n"
 		"};\n"
 		"var my = { target: { mountpoint: " + quote(targetMountPoint) + ", systemVersion: " + systemVersion(targetMountPoint) + ",\n"
@@ -406,6 +442,12 @@ std::unique_ptr<ChoiceScript> ChoiceScript::create(const std::string& targetMoun
 	if (!script->m_impl->run(setup, nullptr, error))
 		return nullptr;
 	return script;
+}
+
+void ChoiceScript::setRunner(const Runner& runner)
+{
+	m_impl->runner = runner;
+	g_runner = &m_impl->runner;
 }
 
 bool ChoiceScript::addScript(const std::string& source, std::string& error)
