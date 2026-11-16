@@ -17,15 +17,20 @@ public:
 	
 	struct Choice
 	{
-		bool selected; // to be installed, can also be JavaScript :-/
+		bool selected; // initially selected, i.e. to be installed
 		// bool enabled; // whether the user can manipulate the selected status
 		std::string id, title;
 		std::vector<std::string> pkgref;
+		// Attributes holding a JavaScript expression, which is not evaluated;
+		// the choice keeps the documented default (selected) for these.
+		std::vector<std::string> unevaluated;
 	};
 	struct PkgRef
 	{
 		size_t installKbytes;
 		std::string path;
+		bool active = true; // false: not installed even if its choice is selected
+		bool activeUnevaluated = false; // "active" is a JavaScript expression
 	};
 	
 	// Domains the package enables: LocalSystem, CurrentUserHomeDirectory

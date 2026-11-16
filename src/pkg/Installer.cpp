@@ -99,6 +99,8 @@ std::vector<Installer::PackageSummary> Installer::packageSummaries()
 			
 			if (!distribution.package(pkgId, ref))
 				throw std::runtime_error("Cannot find <pkg-ref> with id '" + pkgId + "'");
+			if (!ref.active)
+				continue;
 			
 			subdir = ref.path;
 			if (!subdir.empty() && subdir[0] == '#')
@@ -144,6 +146,12 @@ void Installer::installPackage()
 			if (choiceTitle.empty())
 				choiceTitle = c.id;
 			
+			for (const std::string& attr : c.unevaluated)
+			{
+				std::cout << "installer: Warning: choice " << choiceTitle << ": the JavaScript in '" << attr
+						<< "' is not evaluated; treating the choice as selected\n";
+			}
+			
 			std::cout << "installer: Installing selected choice " << choiceTitle << std::endl;
 			
 			for (const std::string& pkgId : c.pkgref)
@@ -156,6 +164,14 @@ void Installer::installPackage()
 					ss << "Cannot find <pkg-ref> with id '" << pkgId << "'";
 					throw std::runtime_error(ss.str());
 				}
+				
+				if (pkgref.activeUnevaluated)
+				{
+					std::cout << "installer: Warning: package " << pkgId
+							<< ": the JavaScript in 'active' is not evaluated; treating the package as active\n";
+				}
+				if (!pkgref.active)
+					continue;
 				
 				const char* path = pkgref.path.c_str();
 				if (*path == '#')

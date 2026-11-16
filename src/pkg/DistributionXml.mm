@@ -39,6 +39,21 @@ std::string DistributionXml::title() const
 	return title;
 }
 
+// A literal boolean ("true"/"false", surrounding whitespace allowed); anything
+// else is a JavaScript expression.
+static bool parseBoolean(const char* text, bool& value)
+{
+	std::string t(text);
+	size_t b = t.find_first_not_of(" \t\r\n"), e = t.find_last_not_of(" \t\r\n");
+	
+	if (b == std::string::npos)
+		return false;
+	t = t.substr(b, e - b + 1);
+	if (t == "true") { value = true; return true; }
+	if (t == "false") { value = false; return true; }
+	return false;
+}
+
 std::vector<std::string> DistributionXml::domains() const
 {
 	static const struct { const char* attribute; const char* domain; } kDomains[] = {
@@ -89,11 +104,30 @@ std::vector<DistributionXml::Choice> DistributionXml::choices() const
 		if (!attrVal) throw std::runtime_error("Element <choice> lacks 'id' attributte");
 		choice.id = (char*) attrVal;
 		
-		attrVal = xmlGetProp(node, (xmlChar*) "selected");
-		if (attrVal != nullptr && strcmp((char*) attrVal, "false") == 0)
-			choice.selected = false;
+		// Initial state: start_selected (a plain boolean) if given, otherwise
+		// "selected" when it is a literal boolean; the default is true.
+		choice.selected = true;
+		attrVal = xmlGetProp(node, (xmlChar*) "start_selected");
+		if (attrVal != nullptr)
+		{
+			bool value;
+			if (parseBoolean((char*) attrVal, value))
+				choice.selected = value;
+			else
+				choice.unevaluated.push_back("start_selected");
+		}
 		else
-			choice.selected = true;
+		{
+			attrVal = xmlGetProp(node, (xmlChar*) "selected");
+			if (attrVal != nullptr)
+			{
+				bool value;
+				if (parseBoolean((char*) attrVal, value))
+					choice.selected = value;
+				else
+					choice.unevaluated.push_back("selected");
+			}
+		}
 
 		m_context->node = node;
 		pkgrefs = xmlXPathEvalExpression((const xmlChar*) "pkg-ref/@id", m_context);
@@ -128,6 +162,8 @@ bool DistributionXml::package(const std::string& id, DistributionXml::PkgRef& pk
 	
 	pkg.installKbytes = 0;
 	pkg.path.clear();
+	pkg.active = true;
+	pkg.activeUnevaluated = false;
 	
 	m_context->node = nullptr;
 	xpathObj = xmlXPathEvalExpression((const xmlChar*) xpath.c_str(), m_context);
@@ -150,6 +186,17 @@ bool DistributionXml::package(const std::string& id, DistributionXml::PkgRef& pk
 		attrVal = xmlGetProp(node, (xmlChar*) "installKBytes");
 		if (attrVal != nullptr)
 			pkg.installKbytes = atoi((char*) attrVal);
+
+		// pkg-refs sharing an id are merged; "active" may sit on any of them
+		attrVal = xmlGetProp(node, (xmlChar*) "active");
+		if (attrVal != nullptr)
+		{
+			bool value;
+			if (parseBoolean((char*) attrVal, value))
+				pkg.active = pkg.active && value;
+			else
+				pkg.activeUnevaluated = true;
+		}
 
 		if (pkg.path.empty() && node->children && node->children->type == XML_TEXT_NODE && !xmlIsBlankNode(node->children))
 			pkg.path = (char*) node->children->content;
