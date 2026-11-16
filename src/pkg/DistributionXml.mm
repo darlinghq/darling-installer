@@ -297,6 +297,13 @@ static std::string checkScript(xmlXPathContextPtr context, const char* xpath)
 	return rv;
 }
 
+bool DistributionXml::resourceFile(const char* element, std::string& file, std::string& mimeType) const
+{
+	file = checkScript(m_context, (std::string("string(/*/") + element + "/@file)").c_str());
+	mimeType = checkScript(m_context, (std::string("string(/*/") + element + "/@mime-type)").c_str());
+	return !file.empty();
+}
+
 bool DistributionXml::allowExternalScripts() const
 {
 	std::string v = checkScript(m_context, "string(/*/options/@allow-external-scripts)");

@@ -36,6 +36,7 @@ add_darling_executable(installer
 	src/pkg/ReceiptsDb.cpp
 	src/pkg/Installer.cpp
 	src/pkg/InstallerDelegate.cpp
+	src/pkg/Volumes.cpp
 	src/pkg/Uninstaller.cpp
 	src/main.cpp
 	src/main-lsbom.cpp

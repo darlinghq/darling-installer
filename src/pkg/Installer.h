@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <set>
+#include <map>
 #include <sys/types.h>
 #include <sys/stat.h>
 #include "archive/XARArchive.h"
@@ -38,6 +39,47 @@ public:
 	// Domains the package can be installed into, as accepted by -target
 	std::vector<std::string> domains();
 	
+	// ---- For a user interface -------------------------------------------------
+	
+	// The title of the package (of the Distribution; the name of a plain package)
+	std::string title();
+	
+	// A <welcome>, <readme>, <license>, <conclusion> or <background> of the Distribution:
+	// its file from the best localization found in Resources
+	struct Resource
+	{
+		std::string data, mimeType;
+	};
+	bool resource(const char* element, Resource& resource);
+	void setPreferredLanguages(const std::vector<std::string>& languages) { m_languages = languages; }
+	
+	// The destination: a directory, or the domain LocalSystem
+	bool setTarget(const std::string& target);
+	const std::string& target() const { return m_target; }
+	
+	// The choices as the outline shows them; setChoiceSelected re-evaluates the conditions
+	// that depend on the choice
+	struct ChoiceNode
+	{
+		std::string id, title, description;
+		bool selected, enabled, visible;
+		int selectionState; // 1: selected, 0: not, -1: some of the subchoices
+		size_t installKBytes;
+		std::vector<ChoiceNode> children;
+	};
+	std::vector<ChoiceNode> choiceTree();
+	void setChoiceSelected(const std::string& id, bool selected);
+	// Space the selected packages need, in kilobytes
+	size_t requiredKilobytes();
+	
+	// The result of the installation-check and volume-check scripts
+	struct CheckResult
+	{
+		enum Type { Pass, Warn, Fatal } type;
+		std::string message;
+	};
+	CheckResult checkInstallation();
+	
 	void installPackage();
 	// Where messages go and who is asked; the default is the command line (the caller keeps the delegate alive)
 	void setDelegate(InstallerDelegate* delegate) { m_delegate = delegate; }
@@ -49,6 +91,9 @@ private:
 	std::vector<ChoiceScript::ChoiceState> choiceStates();
 	bool isPackageActive(const std::string& pkgId, const DistributionXml::PkgRef& ref);
 	void runChecks();
+	CheckResult evaluateChecks();
+	ChoiceNode nodeForLine(const DistributionXml::Line& line);
+	void setSelectedWithChildren(const DistributionXml::Line& line, bool selected);
 	void info(const std::string& text);
 	void warn(const std::string& text);
 	void phase(const std::string& name, double percent);
@@ -97,6 +142,8 @@ private:
 	bool m_choicesLoaded = false;
 	std::shared_ptr<DistributionXml> m_distribution; // null for a package without Distribution
 	std::vector<DistributionXml::Choice> m_choices;
+	std::map<std::string, bool> m_userSelection; // choices the user (or a changes file) decided
+	std::vector<std::string> m_languages = { "en", "English", "Base" };
 	std::unique_ptr<ChoiceScript> m_script; // null without JavaScriptCore
 	bool m_scriptTried = false;
 	bool m_installing = false; // an installation, not an information query

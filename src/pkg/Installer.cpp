@@ -24,6 +24,8 @@
 #include <dirent.h>
 #include <fcntl.h>
 
+static std::string stripPackageSuffix(std::string name);
+
 Installer::Installer(const char* pkg, const char* target)
 : m_pkg(pkg)
 {
@@ -66,6 +68,12 @@ void Installer::loadChoices()
 	
 	m_distribution = std::make_shared<DistributionXml>(distributionFile);
 	m_choices = m_distribution->choices();
+	for (DistributionXml::Choice& c : m_choices)
+	{
+		auto decided = m_userSelection.find(c.id);
+		if (decided != m_userSelection.end())
+			c.selected = decided->second;
+	}
 	evaluateChoiceExpressions();
 }
 
@@ -195,6 +203,9 @@ void Installer::evaluateChoiceExpressions()
 		{
 			for (const auto& e : c.expressions)
 			{
+				// what the user decided is not up to the condition any more
+				if (e.first == "selected" && m_userSelection.count(c.id))
+					continue;
 				bool value, *field = e.first == "selected" ? &c.selected : (e.first == "enabled" ? &c.enabled : &c.visible);
 				std::string error;
 				
@@ -363,10 +374,13 @@ bool Installer::runResource(const std::string& program, const std::vector<std::s
 
 // <installation-check> and <volume-check>: a script returning false stops the
 // installation, unless it sets my.result.type to Warn.
-void Installer::runChecks()
+// The first failing check decides: a fatal result ends the evaluation, a warning is kept
+Installer::CheckResult Installer::evaluateChecks()
 {
+	CheckResult result = { CheckResult::Pass, "" };
+	
 	if (!m_distribution)
-		return;
+		return result;
 	
 	const std::pair<const char*, std::string> checks[] = {
 		{ "installation-check", m_distribution->installationCheck() },
@@ -392,10 +406,32 @@ void Installer::runChecks()
 		
 		std::string message = js->resultMessage();
 		if (js->resultType() == "Warn")
-			warn(message);
+		{
+			if (result.type == CheckResult::Pass)
+				result = { CheckResult::Warn, message };
+		}
 		else
-			throw std::runtime_error(message.empty() ? std::string("The ") + check.first + " of the package failed" : message);
+		{
+			return { CheckResult::Fatal, message.empty() ? std::string("The ") + check.first + " of the package failed" : message };
+		}
 	}
+	return result;
+}
+
+void Installer::runChecks()
+{
+	CheckResult result = evaluateChecks();
+	
+	if (result.type == CheckResult::Fatal)
+		throw std::runtime_error(result.message);
+	if (result.type == CheckResult::Warn)
+		warn(result.message);
+}
+
+Installer::CheckResult Installer::checkInstallation()
+{
+	loadChoices();
+	return evaluateChecks();
 }
 
 void Installer::applyChoiceChanges(const std::vector<ChoiceChange>& changes)
@@ -411,9 +447,9 @@ void Installer::applyChoiceChanges(const std::vector<ChoiceChange>& changes)
 				continue;
 			
 			if (change.toggle)
-				c.selected = !c.selected;
+				m_userSelection[c.id] = c.selected = !c.selected;
 			else if (change.attribute == "selected")
-				c.selected = change.value != 0;
+				m_userSelection[c.id] = c.selected = change.value != 0;
 			else if (change.attribute == "enabled")
 				c.enabled = change.value != 0;
 			else if (change.attribute == "visible")
@@ -422,7 +458,201 @@ void Installer::applyChoiceChanges(const std::vector<ChoiceChange>& changes)
 				warn("customLocation for choice " + c.id + " is not supported");
 		}
 	}
+	// a change can implicitly change other choices
+	evaluateChoiceExpressions();
 }
+
+// ---- For a user interface ----------------------------------------------------
+
+std::string Installer::title()
+{
+	loadChoices();
+	if (m_distribution && !m_distribution->title().empty())
+		return m_distribution->title();
+	return stripPackageSuffix(m_pkg);
+}
+
+static std::string mimeTypeOfFile(const std::string& file)
+{
+	size_t dot = file.rfind('.');
+	std::string ext = dot == std::string::npos ? "" : file.substr(dot + 1);
+	
+	for (char& c : ext)
+		c = tolower(c);
+	if (ext == "html" || ext == "htm") return "text/html";
+	if (ext == "rtf") return "text/rtf";
+	if (ext == "rtfd") return "text/rtfd";
+	return "text/plain";
+}
+
+bool Installer::resource(const char* element, Resource& resource)
+{
+	loadChoices();
+	if (!m_distribution)
+		return false;
+	
+	std::string file;
+	if (!m_distribution->resourceFile(element, file, resource.mimeType))
+		return false;
+	if (resource.mimeType.empty())
+		resource.mimeType = mimeTypeOfFile(file);
+	if (!isSafeArchivePath(file) || file[0] == '/')
+		return false;
+	
+	// the localizations first, then the Resources directory itself
+	std::vector<std::string> candidates;
+	for (const std::string& lang : m_languages)
+		candidates.push_back("Resources/" + lang + ".lproj/" + file);
+	candidates.push_back("Resources/" + file);
+	
+	for (const std::string& path : candidates)
+	{
+		std::shared_ptr<Reader> reader(m_xar->openFile(path));
+		if (!reader)
+			continue;
+		
+		resource.data.resize(reader->length());
+		if (!resource.data.empty() && reader->read(&resource.data[0], resource.data.size(), 0) != (int32_t) resource.data.size())
+			return false;
+		return true;
+	}
+	return false;
+}
+
+bool Installer::setTarget(const std::string& target)
+{
+	struct stat st;
+	std::string path = (target == "LocalSystem") ? "/" : target;
+	
+	if (path.empty() || path[0] != '/' || ::stat(path.c_str(), &st) != 0 || !S_ISDIR(st.st_mode))
+		return false;
+	if (path == m_target)
+		return true;
+	
+	m_target = path;
+	// the scripts see the mount point of the target: evaluate everything again
+	m_script.reset();
+	m_scriptTried = false;
+	if (m_choicesLoaded)
+	{
+		m_choicesLoaded = false;
+		m_choices.clear();
+		loadChoices();
+	}
+	return true;
+}
+
+Installer::ChoiceNode Installer::nodeForLine(const DistributionXml::Line& line)
+{
+	ChoiceNode node;
+	const DistributionXml::Choice* c = findChoice(line.choice);
+	
+	node.id = line.choice;
+	node.selected = node.enabled = node.visible = false;
+	node.installKBytes = 0;
+	node.selectionState = 0;
+	if (c == nullptr)
+		return node;
+	
+	node.title = c->title.empty() ? c->id : c->title;
+	node.description = c->description;
+	node.selected = c->selected;
+	node.enabled = c->enabled;
+	node.visible = c->visible;
+	node.selectionState = selectionState(line);
+	
+	for (const std::string& pkgId : c->pkgref)
+	{
+		DistributionXml::PkgRef ref;
+		
+		if (m_distribution->package(pkgId, ref) && isPackageActive(pkgId, ref))
+			node.installKBytes += ref.installKbytes;
+	}
+	for (const DistributionXml::Line& child : line.children)
+		node.children.push_back(nodeForLine(child));
+	return node;
+}
+
+std::vector<Installer::ChoiceNode> Installer::choiceTree()
+{
+	std::vector<ChoiceNode> rv;
+	
+	loadChoices();
+	if (!m_distribution)
+		return rv;
+	for (const DistributionXml::Line& line : m_distribution->outline())
+		rv.push_back(nodeForLine(line));
+	return rv;
+}
+
+void Installer::setSelectedWithChildren(const DistributionXml::Line& line, bool selected)
+{
+	for (DistributionXml::Choice& c : m_choices)
+	{
+		if (c.id == line.choice)
+			m_userSelection[c.id] = c.selected = selected;
+	}
+	for (const DistributionXml::Line& child : line.children)
+		setSelectedWithChildren(child, selected);
+}
+
+static const DistributionXml::Line* findLine(const std::vector<DistributionXml::Line>& lines, const std::string& id)
+{
+	for (const DistributionXml::Line& l : lines)
+	{
+		if (l.choice == id)
+			return &l;
+		if (const DistributionXml::Line* found = findLine(l.children, id))
+			return found;
+	}
+	return nullptr;
+}
+
+// Selecting a choice that has subchoices selects all of them
+void Installer::setChoiceSelected(const std::string& id, bool selected)
+{
+	loadChoices();
+	if (!m_distribution)
+		return;
+	
+	std::vector<DistributionXml::Line> outline = m_distribution->outline();
+	if (const DistributionXml::Line* line = findLine(outline, id))
+		setSelectedWithChildren(*line, selected);
+	else
+	{
+		for (DistributionXml::Choice& c : m_choices)
+		{
+			if (c.id == id)
+				m_userSelection[id] = c.selected = selected;
+		}
+	}
+	evaluateChoiceExpressions();
+}
+
+size_t Installer::requiredKilobytes()
+{
+	size_t total = 0;
+	
+	loadChoices();
+	if (!m_distribution)
+	{
+		m_subdir = "";
+		return loadPackageInfo()->installKBytes();
+	}
+	for (const DistributionXml::Choice& c : m_choices)
+	{
+		if (!c.selected)
+			continue;
+		for (const std::string& pkgId : c.pkgref)
+		{
+			DistributionXml::PkgRef ref;
+			if (m_distribution->package(pkgId, ref) && isPackageActive(pkgId, ref))
+				total += ref.installKbytes;
+		}
+	}
+	return total;
+}
+
 
 static void indent(std::ostream& out, int depth)
 {
