@@ -30,6 +30,8 @@ add_darling_executable(installer
 	src/bom/BOMBTree.cpp
 	src/bom/BOMFilesBTree.cpp
 	src/pkg/DistributionXml.mm
+	src/pkg/ChoicesXml.mm
+	src/pkg/ChoiceScript.mm
 	src/pkg/PackageInfoXml.cpp
 	src/pkg/ReceiptsDb.cpp
 	src/pkg/Installer.cpp
@@ -47,5 +49,7 @@ install(TARGETS installer RUNTIME DESTINATION libexec/darling/usr/bin)
 set(BINARY_PACKAGING_MODE ON)
 InstallSymlink(installer libexec/darling/usr/bin/uninstaller)
 InstallSymlink(installer libexec/darling/usr/bin/pkgutil)
+# installer(8) lives in /usr/sbin on macOS
+InstallSymlink(../bin/installer libexec/darling/usr/sbin/installer)
 
 install(FILES installer.8 DESTINATION libexec/darling/usr/share/man/man8)

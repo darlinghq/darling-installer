@@ -59,6 +59,12 @@ size_t PackageInfoXml::installKBytes() const
 	return 0;
 }
 
+bool PackageInfoXml::requiresAuthentication() const
+{
+	std::string v = xpathString("string(/pkg-info/@auth)");
+	return !v.empty() && v != "none";
+}
+
 std::string PackageInfoXml::script(const char* phase) const
 {
 	std::string xpath;

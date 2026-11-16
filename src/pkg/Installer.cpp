@@ -5,6 +5,7 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <iostream>
+#include <ostream>
 #include <cstring>
 #include <sstream>
 #include <errno.h>
@@ -24,23 +25,27 @@
 #include <fcntl.h>
 
 Installer::Installer(const char* pkg, const char* target)
-: m_pkg(pkg), m_target(target)
+: m_pkg(pkg)
 {
 	std::shared_ptr<FileReader> file;
 	struct stat st;
 	char origCwd[PATH_MAX];
 	
-	// DomainKey
-	if (strcmp(target, "LocalSystem") == 0)
-		target = "/";
-	else if (target[0] != '/')
-		throw std::runtime_error("Invalid target path");
+	if (::stat(pkg, &st) != 0 || !S_ISREG(st.st_mode))
+		throw std::runtime_error(std::string("Error - the package path specified was invalid: '") + pkg + "'.");
 	
-	if (::stat(target, &st) != 0)
-		throw std::runtime_error("Invalid target path");
-	
-	if (!S_ISDIR(st.st_mode))
-		throw std::runtime_error("Invalid target path; not a directory");
+	if (target != nullptr)
+	{
+		const char* path = target;
+		
+		// DomainKey
+		if (strcmp(target, "LocalSystem") == 0)
+			path = "/";
+		
+		if (path[0] != '/' || ::stat(path, &st) != 0 || !S_ISDIR(st.st_mode))
+			throw std::runtime_error(std::string("Error trying to locate volume at ") + target);
+		m_target = path;
+	}
 	
 	file.reset(new FileReader(pkg));
 	m_xar.reset(new XARArchive(file));
@@ -49,25 +54,711 @@ Installer::Installer(const char* pkg, const char* target)
 	m_originalCwd = origCwd;
 }
 
+void Installer::loadChoices()
+{
+	if (m_choicesLoaded)
+		return;
+	m_choicesLoaded = true;
+	
+	std::shared_ptr<Reader> distributionFile(m_xar->openFile("Distribution"));
+	if (!distributionFile)
+		return;
+	
+	m_distribution = std::make_shared<DistributionXml>(distributionFile);
+	m_choices = m_distribution->choices();
+	evaluateChoiceExpressions();
+}
+
+// The script context of the Distribution; null if JavaScriptCore is not available
+ChoiceScript* Installer::script()
+{
+	if (!m_scriptTried)
+	{
+		m_scriptTried = true;
+		m_script = ChoiceScript::create(m_target.empty() ? "/" : m_target);
+		if (m_script)
+		{
+			m_script->setRunner([this](const std::string& program, const std::vector<std::string>& args, int& exitCode) {
+				return runResource(program, args, exitCode);
+			});
+		}
+		
+		if (m_script && m_distribution)
+		{
+			for (const std::string& source : m_distribution->scripts())
+			{
+				std::string error;
+				if (!m_script->addScript(source, error))
+					std::cerr << "installer: Warning: a <script> of the package failed: " << error << std::endl;
+			}
+		}
+	}
+	return m_script.get();
+}
+
+// -1, 0 or 1 as system.compareVersions; dot separated numbers
+static int compareVersionStrings(const std::string& a, const std::string& b)
+{
+	size_t i = 0, j = 0;
+	
+	while (i < a.length() || j < b.length())
+	{
+		long x = 0, y = 0;
+		
+		if (i < a.length())
+		{
+			x = strtol(a.c_str() + i, nullptr, 10);
+			size_t dot = a.find('.', i);
+			i = (dot == std::string::npos) ? a.length() : dot + 1;
+		}
+		if (j < b.length())
+		{
+			y = strtol(b.c_str() + j, nullptr, 10);
+			size_t dot = b.find('.', j);
+			j = (dot == std::string::npos) ? b.length() : dot + 1;
+		}
+		if (x != y)
+			return x < y ? -1 : 1;
+	}
+	return 0;
+}
+
+// What the JavaScript sees of the choices: their state and how their packages relate to the installed ones
+std::vector<ChoiceScript::ChoiceState> Installer::choiceStates()
+{
+	std::vector<ChoiceScript::ChoiceState> states;
+	
+	for (const DistributionXml::Choice& c : m_choices)
+	{
+		ChoiceScript::ChoiceState state;
+		int notInstalled = 0, same = 0, upgrades = 0, downgrades = 0;
+		
+		state.id = c.id;
+		state.title = c.title;
+		state.description = c.description;
+		state.selected = c.selected;
+		state.enabled = c.enabled;
+		state.visible = c.visible;
+		
+		for (const std::string& pkgId : c.pkgref)
+		{
+			DistributionXml::PkgRef ref;
+			ReceiptsDb::InstalledPackageInfo installed;
+			
+			if (!m_distribution->package(pkgId, ref))
+				continue;
+			state.packages.push_back({ pkgId, ref.version });
+			
+			if (!ReceiptsDb::getInstalledPackageInfo(pkgId.c_str(), installed))
+				notInstalled++;
+			else
+			{
+				int cmp = compareVersionStrings(ref.version, installed.version);
+				if (cmp > 0) upgrades++;
+				else if (cmp < 0) downgrades++;
+				else same++;
+			}
+		}
+		
+		// clean: none installed; installed: all installed; upgrade/downgrade: all newer/older; otherwise mixed
+		int total = notInstalled + same + upgrades + downgrades;
+		if (total == 0 || notInstalled == total) state.packageUpgradeAction = "clean";
+		else if (same == total) state.packageUpgradeAction = "installed";
+		else if (upgrades == total) state.packageUpgradeAction = "upgrade";
+		else if (downgrades == total) state.packageUpgradeAction = "downgrade";
+		else state.packageUpgradeAction = "mixed";
+		
+		states.push_back(state);
+	}
+	return states;
+}
+
+// Evaluates the JavaScript expressions of selected/enabled/visible. A choice can
+// refer to other choices, so evaluate until the states settle.
+void Installer::evaluateChoiceExpressions()
+{
+	bool any = false;
+	for (const DistributionXml::Choice& c : m_choices)
+		any = any || !c.expressions.empty();
+	
+	ChoiceScript* js = any ? script() : nullptr;
+	if (js == nullptr)
+		return;
+	
+	for (int pass = 0; pass < 5; pass++)
+	{
+		bool changed = false;
+		
+		js->setChoices(choiceStates());
+		
+		for (DistributionXml::Choice& c : m_choices)
+		{
+			for (const auto& e : c.expressions)
+			{
+				bool value, *field = e.first == "selected" ? &c.selected : (e.first == "enabled" ? &c.enabled : &c.visible);
+				std::string error;
+				
+				if (!js->evaluate(e.second, value, error))
+				{
+					c.evalErrors[e.first] = error;
+					continue;
+				}
+				c.evalErrors.erase(e.first);
+				if (*field != value)
+				{
+					*field = value;
+					changed = true;
+				}
+			}
+		}
+		if (!changed)
+			break;
+	}
+	
+	// what could not be evaluated keeps its default
+	for (DistributionXml::Choice& c : m_choices)
+	{
+		c.unevaluated.clear();
+		for (const auto& e : c.evalErrors)
+			c.unevaluated.push_back(e.first);
+	}
+}
+
+bool Installer::isPackageActive(const std::string& pkgId, const DistributionXml::PkgRef& ref)
+{
+	if (ref.activeExpression.empty())
+		return ref.active;
+	
+	ChoiceScript* js = script();
+	std::string error;
+	bool value;
+	
+	if (js != nullptr)
+	{
+		js->setChoices(choiceStates());
+		
+		if (js->evaluate(ref.activeExpression, value, error))
+			return value && ref.active;
+	}
+	std::cout << "installer: Warning: package " << pkgId << ": the JavaScript in 'active' is not evaluated"
+			<< (error.empty() ? " (JavaScriptCore is not available)" : " (" + error + ")") << "; treating the package as active\n";
+	return ref.active;
+}
+
+// The user is asked before a package runs one of its programs; only a terminal can be asked
+bool Installer::confirmExternalProgram(const std::string& program, const std::vector<std::string>& args)
+{
+	std::string command = program;
+	for (const std::string& a : args)
+		command += " " + a;
+	
+	if (!isatty(STDIN_FILENO) || !isatty(STDERR_FILENO))
+	{
+		std::cerr << "installer: Warning: the package wants to run '" << command
+				<< "', which needs your confirmation on a terminal; not running it\n";
+		return false;
+	}
+	
+	std::cerr << "installer: The package wants to run the program '" << command
+			<< "' with the privileges of this installer. Allow? [y/N] " << std::flush;
+	
+	char answer[16];
+	if (fgets(answer, sizeof(answer), stdin) == nullptr)
+		return false;
+	return answer[0] == 'y' || answer[0] == 'Y';
+}
+
+// The Resources directory of the package, extracted to a temporary directory
+bool Installer::extractResources()
+{
+	if (!m_resourcesDir.empty())
+		return true;
+	
+	char dir[] = "/tmp/installerResourcesXXXXXX";
+	if (!mkdtemp(dir))
+		return false;
+	m_resourcesDir = dir;
+	
+	for (const std::string& path : m_xar->listFiles())
+	{
+		if (path.compare(0, 10, "Resources/") != 0)
+			continue;
+		
+		std::string dest = m_resourcesDir + "/" + path.substr(10);
+		unsigned mode;
+		
+		if (!isSafeArchivePath(path))
+			continue;
+		mkParentDirs(dest.c_str(), 0755);
+		
+		std::shared_ptr<Reader> file(m_xar->openFile(path));
+		if (!file)
+			continue;
+		extractFile(file, dest.c_str(), nullptr);
+		::chmod(dest.c_str(), m_xar->fileMode(path, mode) ? (mode & 0777) : 0644);
+	}
+	return true;
+}
+
+// system.run/runOnce: launch a program of the package's Resources directory. Returns
+// false if it was not executed: during an information query, without allow-external-scripts,
+// or when the user does not agree.
+bool Installer::runResource(const std::string& program, const std::vector<std::string>& args, int& exitCode)
+{
+	if (!m_installing)
+		return false;
+	
+	if (program.empty() || program[0] == '/' || !isSafeArchivePath(program))
+	{
+		std::cerr << "installer: Warning: refusing to run '" << program << "': not a program of the package's Resources\n";
+		return false;
+	}
+	if (!m_distribution || !m_distribution->allowExternalScripts())
+	{
+		std::cerr << "installer: Warning: the package runs '" << program << "', but allow-external-scripts is not enabled\n";
+		return false;
+	}
+	if (m_allowedPrograms.count(program) == 0)
+	{
+		if (!confirmExternalProgram(program, args))
+			return false;
+		m_allowedPrograms.insert(program);
+	}
+	if (!extractResources())
+		return false;
+	
+	std::vector<std::string> argvStrings = { m_resourcesDir + "/" + program };
+	argvStrings.insert(argvStrings.end(), args.begin(), args.end());
+	std::vector<char*> argv;
+	for (std::string& a : argvStrings)
+		argv.push_back(&a[0]);
+	argv.push_back(nullptr);
+	
+	int pipes[2];
+	if (pipe(pipes) != 0)
+		return false;
+	std::cout << std::flush;
+	
+	pid_t pid = fork();
+	if (pid == 0)
+	{
+		close(pipes[0]);
+		fcntl(pipes[1], F_SETFD, FD_CLOEXEC);
+		
+		chdir(m_resourcesDir.c_str());
+		setenv("COMMAND_LINE_INSTALL", "1", 1);
+		setenv("PACKAGE_PATH", m_pkg, 1);
+		setenv("DSTVOLUME", m_target.c_str(), 1);
+		setenv("INSTALLER_TEMP", m_resourcesDir.c_str(), 1);
+		
+		execv(argv[0], argv.data());
+		int err = errno;
+		write(pipes[1], &err, sizeof(err));
+		_exit(127);
+	}
+	
+	close(pipes[1]);
+	int err = 0, status = 0;
+	ssize_t rd = (pid > 0) ? read(pipes[0], &err, sizeof(err)) : 0;
+	close(pipes[0]);
+	if (pid < 0)
+		return false;
+	waitpid(pid, &status, 0);
+	
+	if (rd > 0)
+	{
+		std::cerr << "installer: Warning: cannot run '" << program << "': " << strerror(err) << "\n";
+		return false;
+	}
+	exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
+	return true;
+}
+
+// <installation-check> and <volume-check>: a script returning false stops the
+// installation, unless it sets my.result.type to Warn.
+void Installer::runChecks()
+{
+	if (!m_distribution)
+		return;
+	
+	const std::pair<const char*, std::string> checks[] = {
+		{ "installation-check", m_distribution->installationCheck() },
+		{ "volume-check", m_distribution->volumeCheck() },
+	};
+	for (const auto& check : checks)
+	{
+		if (check.second.empty())
+			continue;
+		
+		ChoiceScript* js = script();
+		std::string error;
+		bool passed;
+		
+		if (js == nullptr || !js->evaluate(check.second, passed, error))
+		{
+			std::cout << "installer: Warning: the " << check.first << " script is not evaluated"
+					<< (error.empty() ? " (JavaScriptCore is not available)" : " (" + error + ")") << "; continuing\n";
+			continue;
+		}
+		if (passed)
+			continue;
+		
+		std::string message = js->resultMessage();
+		if (js->resultType() == "Warn")
+			std::cout << "installer: Warning: " << message << "\n";
+		else
+			throw std::runtime_error(message.empty() ? std::string("The ") + check.first + " of the package failed" : message);
+	}
+}
+
+void Installer::applyChoiceChanges(const std::vector<ChoiceChange>& changes)
+{
+	loadChoices();
+	
+	for (const ChoiceChange& change : changes)
+	{
+		// A change naming a choice the package lacks is ignored
+		for (DistributionXml::Choice& c : m_choices)
+		{
+			if (c.id != change.identifier)
+				continue;
+			
+			if (change.toggle)
+				c.selected = !c.selected;
+			else if (change.attribute == "selected")
+				c.selected = change.value != 0;
+			else if (change.attribute == "enabled")
+				c.enabled = change.value != 0;
+			else if (change.attribute == "visible")
+				c.visible = change.value != 0;
+			else if (change.attribute == "customLocation")
+				std::cerr << "installer: Warning: customLocation for choice " << c.id << " is not supported\n";
+		}
+	}
+}
+
+static void indent(std::ostream& out, int depth)
+{
+	for (int i = 0; i < depth; i++)
+		out << "    ";
+}
+
+static std::string xmlText(const std::string& s)
+{
+	std::string rv;
+	for (char c : s)
+	{
+		switch (c)
+		{
+			case '&': rv += "&amp;"; break;
+			case '<': rv += "&lt;"; break;
+			case '>': rv += "&gt;"; break;
+			default: rv += c;
+		}
+	}
+	return rv;
+}
+
+static void plistHeader(std::ostream& out)
+{
+	out << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
+		"<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n"
+		"<plist version=\"1.0\">\n";
+}
+
+static std::string fileURL(const std::string& path, const std::string& fragment)
+{
+	std::string url = "file://localhost";
+	static const char* hex = "0123456789ABCDEF";
+	
+	for (unsigned char c : path)
+	{
+		if (isalnum(c) || strchr("/-._~", c))
+			url += c;
+		else
+		{
+			url += '%';
+			url += hex[c >> 4];
+			url += hex[c & 15];
+		}
+	}
+	return url + "#" + fragment;
+}
+
+const DistributionXml::Choice* Installer::findChoice(const std::string& id) const
+{
+	for (const DistributionXml::Choice& c : m_choices)
+	{
+		if (c.id == id)
+			return &c;
+	}
+	return nullptr;
+}
+
+// 1: the choice (or all of its subchoices) is selected, 0: none, -1: some of them
+int Installer::selectionState(const DistributionXml::Line& line) const
+{
+	const DistributionXml::Choice* c = findChoice(line.choice);
+	
+	if (line.children.empty())
+		return (c != nullptr && c->selected) ? 1 : 0;
+	return selectionState(line.children);
+}
+
+int Installer::selectionState(const std::vector<DistributionXml::Line>& lines) const
+{
+	bool any = false, all = true;
+	
+	for (const DistributionXml::Line& l : lines)
+	{
+		int state = selectionState(l);
+		any = any || state != 0;
+		all = all && state == 1;
+	}
+	return all ? 1 : (any ? -1 : 0);
+}
+
+void Installer::printChoice(std::ostream& out, int depth, const std::string& id, const std::string& title,
+		bool enabled, bool visible, int selected, size_t kbytes, const std::vector<std::string>& packages,
+		const std::vector<DistributionXml::Line>& children)
+{
+	indent(out, depth); out << "<dict>\n";
+	indent(out, depth + 1); out << "<key>childItems</key>\n";
+	if (children.empty())
+	{
+		indent(out, depth + 1); out << "<array/>\n";
+	}
+	else
+	{
+		indent(out, depth + 1); out << "<array>\n";
+		for (const DistributionXml::Line& l : children)
+			printLine(out, depth + 2, l);
+		indent(out, depth + 1); out << "</array>\n";
+	}
+	indent(out, depth + 1); out << "<key>choiceIdentifier</key>\n";
+	indent(out, depth + 1); out << "<string>" << xmlText(id) << "</string>\n";
+	indent(out, depth + 1); out << "<key>choiceIsEnabled</key>\n";
+	indent(out, depth + 1); out << (enabled ? "<true/>" : "<false/>") << "\n";
+	indent(out, depth + 1); out << "<key>choiceIsSelected</key>\n";
+	indent(out, depth + 1); out << "<integer>" << selected << "</integer>\n";
+	indent(out, depth + 1); out << "<key>choiceIsVisible</key>\n";
+	indent(out, depth + 1); out << (visible ? "<true/>" : "<false/>") << "\n";
+	indent(out, depth + 1); out << "<key>choiceSizeInKilobytes</key>\n";
+	indent(out, depth + 1); out << "<integer>" << kbytes << "</integer>\n";
+	indent(out, depth + 1); out << "<key>choiceTitle</key>\n";
+	indent(out, depth + 1); out << "<string>" << xmlText(title) << "</string>\n";
+	indent(out, depth + 1); out << "<key>pathsOfActivePackagesInChoice</key>\n";
+	if (packages.empty())
+	{
+		indent(out, depth + 1); out << "<array/>\n";
+	}
+	else
+	{
+		indent(out, depth + 1); out << "<array>\n";
+		for (const std::string& p : packages)
+		{
+			indent(out, depth + 2); out << "<string>" << xmlText(p) << "</string>\n";
+		}
+		indent(out, depth + 1); out << "</array>\n";
+	}
+	indent(out, depth); out << "</dict>\n";
+}
+
+void Installer::printLine(std::ostream& out, int depth, const DistributionXml::Line& line)
+{
+	const DistributionXml::Choice* c = findChoice(line.choice);
+	std::vector<std::string> packages;
+	size_t kbytes = 0;
+	
+	if (c == nullptr)
+		return;
+	
+	char* real = realpath(m_pkg, nullptr);
+	std::string pkgPath = real ? real : m_pkg;
+	free(real);
+	
+	for (const std::string& pkgId : c->pkgref)
+	{
+		DistributionXml::PkgRef ref;
+		
+		if (!m_distribution->package(pkgId, ref) || !isPackageActive(pkgId, ref))
+			continue;
+		
+		std::string sub = ref.path;
+		if (!sub.empty() && sub[0] == '#')
+			sub.erase(0, 1);
+		packages.push_back(fileURL(pkgPath, sub));
+		kbytes += ref.installKbytes;
+	}
+	
+	printChoice(out, depth, c->id, c->title.empty() ? c->id : c->title, c->enabled, c->visible,
+			selectionState(line), kbytes, packages, line.children);
+}
+
+// QUIRK: the hierarchy is wrapped in a root choice named __ROOT_CHOICE_IDENT_<title> whose selection
+// is -1 when its subchoices differ (1 all, 0 none); a choice's size is the sum of its active
+// packages; package paths are file://localhost URLs with the subpackage as the fragment.
+// Not documented. Evidence: black-box observation on macOS 26.7.3 (tier 2).
+// Tests: "-showChoicesXML: root choice with mixed selection", "-showChoicesXML: a leaf choice"
+void Installer::printChoicesXML(std::ostream& out)
+{
+	loadChoices();
+	plistHeader(out);
+	
+	if (!m_distribution)
+	{
+		out << "<array/>\n</plist>\n";
+		return;
+	}
+	
+	std::vector<DistributionXml::Line> outline = m_distribution->outline();
+	
+	out << "<array>\n";
+	printChoice(out, 1, "__ROOT_CHOICE_IDENT_" + m_distribution->title(), m_distribution->title(), true, true,
+			selectionState(outline), 0, {}, outline);
+	out << "</array>\n</plist>\n";
+}
+
+static void collectLines(const std::vector<DistributionXml::Line>& lines, std::vector<std::string>& ids)
+{
+	for (const DistributionXml::Line& l : lines)
+	{
+		ids.push_back(l.choice);
+		collectLines(l.children, ids);
+	}
+}
+
+// QUIRK: -showChoiceChangesXML and -showChoicesAfterApplyingChangesXML list visible, enabled and
+// selected (in that order, selected as 0/1, the others as booleans) for each choice, and a
+// change naming an unknown choice is ignored without an error. -showChoiceChangesXML is not in
+// the tool's -help. Evidence: black-box observation on macOS 26.7.3 (tier 2).
+// Tests: "-showChoiceChangesXML: visible, enabled and selected per choice", "-showChoicesAfterApplyingChangesXML with a dict file"
+void Installer::printChoiceChanges(std::ostream& out)
+{
+	loadChoices();
+	plistHeader(out);
+	
+	std::vector<std::string> ids;
+	if (m_distribution)
+		collectLines(m_distribution->outline(), ids);
+	
+	if (ids.empty())
+	{
+		out << "<array/>\n</plist>\n";
+		return;
+	}
+	
+	out << "<array>\n";
+	for (const std::string& id : ids)
+	{
+		const DistributionXml::Choice* c = findChoice(id);
+		if (c == nullptr)
+			continue;
+		
+		struct { const char* attribute; bool isBool; int value; } attrs[] = {
+			{ "visible", true, c->visible }, { "enabled", true, c->enabled }, { "selected", false, c->selected },
+		};
+		for (const auto& a : attrs)
+		{
+			out << "    <dict>\n"
+				"        <key>attributeSetting</key>\n"
+				"        " << (a.isBool ? (a.value ? "<true/>" : "<false/>") : (a.value ? "<integer>1</integer>" : "<integer>0</integer>")) << "\n"
+				"        <key>choiceAttribute</key>\n"
+				"        <string>" << a.attribute << "</string>\n"
+				"        <key>choiceIdentifier</key>\n"
+				"        <string>" << xmlText(id) << "</string>\n"
+				"    </dict>\n";
+		}
+	}
+	out << "</array>\n</plist>\n";
+}
+
+Installer::~Installer()
+{
+	if (!m_resourcesDir.empty())
+		removeDirectory(m_resourcesDir.c_str());
+}
+
+static std::string stripPackageSuffix(std::string name)
+{
+	size_t slash = name.rfind('/');
+	if (slash != std::string::npos)
+		name.erase(0, slash + 1);
+	if (name.length() > 4 && name.compare(name.length() - 4, 4, ".pkg") == 0)
+		name.erase(name.length() - 4);
+	return name;
+}
+
+std::vector<std::string> Installer::domains()
+{
+	std::shared_ptr<Reader> distributionFile(m_xar->openFile("Distribution"));
+	
+	// Only a distribution can enable domains
+	if (!distributionFile)
+		return {};
+	return DistributionXml(distributionFile).domains();
+}
+
+std::vector<Installer::PackageSummary> Installer::packageSummaries()
+{
+	std::vector<PackageSummary> rv;
+	std::string subdir;
+	
+	loadChoices();
+	if (!m_distribution)
+	{
+		m_subdir = "";
+		std::shared_ptr<PackageInfoXml> info = loadPackageInfo();
+		rv.push_back({ stripPackageSuffix(m_pkg), info->installKBytes(), info->requiresAuthentication() });
+		return rv;
+	}
+	
+	for (const DistributionXml::Choice& c : m_choices)
+	{
+		if (!c.selected)
+			continue;
+		
+		for (const std::string& pkgId : c.pkgref)
+		{
+			DistributionXml::PkgRef ref;
+			
+			if (!m_distribution->package(pkgId, ref))
+				throw std::runtime_error("Cannot find <pkg-ref> with id '" + pkgId + "'");
+			if (!isPackageActive(pkgId, ref))
+				continue;
+			
+			subdir = ref.path;
+			if (!subdir.empty() && subdir[0] == '#')
+				subdir.erase(0, 1);
+			
+			m_subdir = subdir.c_str();
+			std::shared_ptr<PackageInfoXml> info = loadPackageInfo();
+			rv.push_back({ stripPackageSuffix(subdir), info->installKBytes(), info->requiresAuthentication() });
+		}
+	}
+	m_subdir = "";
+	return rv;
+}
+
 void Installer::installPackage()
 {
-	std::shared_ptr<Reader> distributionFile;
+	if (m_target.empty())
+		throw std::runtime_error("Must specify -target");
+	m_installing = true;
 	
 	// If "Distribution" file exists, then read it and find out choices enabled by default (normally located in subdirectories)
 	// If no "Distribution" file exists, then there are no subdirectories and we proceed with installation
-	if (Reader* distr = m_xar->openFile("Distribution"))
+	loadChoices();
+	if (m_distribution)
 	{
-		std::unique_ptr<DistributionXml> distribution;
-		std::vector<DistributionXml::Choice> choices;
+		const std::shared_ptr<DistributionXml>& distribution = m_distribution;
 		
-		distributionFile.reset(distr);
-		distribution.reset(new DistributionXml(distributionFile));
+		runChecks();
 		
 		std::cout << "installer: Package name is " << distribution->title() << std::endl;
 		std::cout << "installer: Installing at base path " << m_target << std::endl;
 		
-		choices = distribution->choices();
-		for (const DistributionXml::Choice& c : choices)
+		for (const DistributionXml::Choice& c : m_choices)
 		{
 			if (!c.selected)
 				continue;
@@ -76,6 +767,16 @@ void Installer::installPackage()
 			// Fallback to using id as a replacement for title
 			if (choiceTitle.empty())
 				choiceTitle = c.id;
+			
+			for (const std::string& attr : c.unevaluated)
+			{
+				if (attr.find("selected") == std::string::npos)
+					continue; // enabled/visible only matter to a user interface
+				auto err = c.evalErrors.find(attr);
+				std::cout << "installer: Warning: choice " << choiceTitle << ": the JavaScript in '" << attr
+						<< "' is not evaluated" << (err == c.evalErrors.end() ? " (JavaScriptCore is not available)" : " (" + err->second + ")")
+						<< "; treating the choice as selected\n";
+			}
 			
 			std::cout << "installer: Installing selected choice " << choiceTitle << std::endl;
 			
@@ -89,6 +790,9 @@ void Installer::installPackage()
 					ss << "Cannot find <pkg-ref> with id '" << pkgId << "'";
 					throw std::runtime_error(ss.str());
 				}
+				
+				if (!isPackageActive(pkgId, pkgref))
+					continue;
 				
 				const char* path = pkgref.path.c_str();
 				if (*path == '#')
@@ -209,23 +913,27 @@ void Installer::extractPayload(const char* payloadFileName, std::string destinat
 	{
 		// The final path is a concatenation of target, pkgInfo->installLocation()
 		// and name.
+		if (!isSafeArchivePath(name))
+			throw std::runtime_error("Refusing to install payload entry outside the destination: " + name);
+
 		path.resize(basePathLen);
 		path += name;
 		
-		// std::cout << path << std::endl;
-
 		mkParentDirs(path.c_str(), st.st_mode & 0777);
 
 		if (S_ISDIR(st.st_mode))
 		{
-			if (::mkdir(path.c_str(), st.st_mode & 0777) != 0)
+			if (::mkdir(path.c_str(), st.st_mode & 0777) == 0)
 			{
-				if (errno != EEXIST)
-				{
-					std::stringstream ss;
-					ss << "Cannot mkdir " << path << ": " << strerror(errno);
-					throw std::runtime_error(ss.str());
-				}
+				// Only directories created by this package get its ownership;
+				// pre-existing ones (/usr, /Applications...) are left alone.
+				applyOwner(path.c_str(), st, -1);
+			}
+			else if (errno != EEXIST)
+			{
+				std::stringstream ss;
+				ss << "Cannot mkdir " << path << ": " << strerror(errno);
+				throw std::runtime_error(ss.str());
 			}
 		}
 		else if (S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode))
@@ -235,29 +943,68 @@ void Installer::extractPayload(const char* payloadFileName, std::string destinat
 		}
 		else if (S_ISLNK(st.st_mode))
 		{
-			char target[256];
-			int rd;
+			// The link target is the entry's data; it is not limited in length.
+			std::string target(st.st_size, '\0');
 			
-			rd = cpioFile->read(target, sizeof(target)-1, 0);
-			target[rd] = '\0';
+			if (st.st_size == 0 || cpioFile->read(&target[0], st.st_size, 0) != st.st_size)
+				throw std::runtime_error("Cannot read the symlink target of " + path);
 			
 			::unlink(path.c_str());
-			if (::symlink(target, path.c_str()) != 0)
+			if (::symlink(target.c_str(), path.c_str()) != 0)
 			{
 				std::stringstream ss;
 				ss << "Cannot create symlink " << path << ": " << strerror(errno);
 				throw std::runtime_error(ss.str());
 			}
+			applyOwner(path.c_str(), st, AT_SYMLINK_NOFOLLOW);
+			applyMtime(path.c_str(), st, AT_SYMLINK_NOFOLLOW);
 		}
 		else
 		{
-			extractFile(cpioFile, path.c_str());
-			::chmod(path.c_str(), st.st_mode);
+			extractFile(cpioFile, path.c_str(), &st);
+			applyMtime(path.c_str(), st, 0);
 		}
 	}
 }
 
-void Installer::extractFile(std::shared_ptr<Reader> reader, const char* dest)
+bool Installer::isSafeArchivePath(const std::string& name)
+{
+	// A payload entry is relative to the destination directory, so no
+	// component may climb out of it.
+	size_t pos = 0;
+	
+	while (pos <= name.length())
+	{
+		size_t end = name.find('/', pos);
+		if (end == std::string::npos)
+			end = name.length();
+		if (name.compare(pos, end - pos, "..") == 0)
+			return false;
+		pos = end + 1;
+	}
+	return true;
+}
+
+void Installer::applyOwner(const char* path, const struct stat& st, int flags)
+{
+	// Changing ownership is only possible for root; a normal user keeps the
+	// files it extracts.
+	if (geteuid() != 0)
+		return;
+	if (::fchownat(AT_FDCWD, path, st.st_uid, st.st_gid, flags) != 0)
+		std::cerr << "installer: Warning: cannot set the owner of " << path << ": " << strerror(errno) << std::endl;
+}
+
+void Installer::applyMtime(const char* path, const struct stat& st, int flags)
+{
+	struct timespec times[2];
+	
+	times[0].tv_sec = times[1].tv_sec = st.st_mtime;
+	times[0].tv_nsec = times[1].tv_nsec = 0;
+	::utimensat(AT_FDCWD, path, times, flags);
+}
+
+void Installer::extractFile(std::shared_ptr<Reader> reader, const char* dest, const struct stat* st)
 {
 	std::unique_ptr<char[]> buf(new char[4096]);
 	uint64_t length, done = 0;
@@ -265,7 +1012,8 @@ void Installer::extractFile(std::shared_ptr<Reader> reader, const char* dest)
 
 	::unlink(dest);
 
-	fd = ::open(dest, O_CREAT|O_WRONLY, 0600);
+	// O_EXCL|O_NOFOLLOW: never write through a link that appeared at this path
+	fd = ::open(dest, O_CREAT|O_EXCL|O_WRONLY|O_NOFOLLOW, 0600);
 	if (fd == -1)
 	{
 		std::stringstream ss;
@@ -294,6 +1042,14 @@ void Installer::extractFile(std::shared_ptr<Reader> reader, const char* dest)
 		}
 
 		done += rd;
+	}
+
+	if (st != nullptr)
+	{
+		// The owner goes first: changing it clears setuid/setgid bits.
+		if (geteuid() == 0 && ::fchown(fd, st->st_uid, st->st_gid) != 0)
+			std::cerr << "installer: Warning: cannot set the owner of " << dest << ": " << strerror(errno) << std::endl;
+		::fchmod(fd, st->st_mode & 07777);
 	}
 
 	::close(fd);
@@ -533,12 +1289,12 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 
 		setenv("COMMAND_LINE_INSTALL", "1", 1);
 		setenv("PACKAGE_PATH", m_pkg, 1);
-		setenv("DSTVOLUME", m_target, 1);
+		setenv("DSTVOLUME", m_target.c_str(), 1);
 		setenv("DSTROOT", installLocation, 1);
 		setenv("INSTALLER_TEMP", scriptTempDir, 1);
 		setenv("TMPDIR", scriptTempDir, 1);
 
-		execl(scriptName, scriptName, m_pkg, installLocation, m_target, nullptr);
+		execl(scriptName, scriptName, m_pkg, installLocation, m_target.c_str(), nullptr);
 
 		err = errno;
 		write(pipes[1], &err, sizeof(err));
@@ -562,11 +1318,7 @@ int Installer::runScript(const char* scriptName, const char* scriptTempDir, cons
 			// problem running the script
 			std::stringstream ss;
 			ss << "Cannot run script " << scriptName << ": " << strerror(err);
-			
-			// Since we don't have /usr/bin/perl yet, we ignore errors like this one.
-			std::cerr << ss.str() << std::endl;
-			// throw std::runtime_error(ss.str());
-			return 0;
+			throw std::runtime_error(ss.str());
 		}
 		else
 		{

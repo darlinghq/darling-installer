@@ -167,10 +167,68 @@ int64_t XARArchive::extractXMLNumber(xmlXPathContextPtr context, const char* que
 	return rv;
 }
 
+static std::string childText(xmlNodePtr node, const char* name)
+{
+	for (xmlNodePtr c = node->children; c != nullptr; c = c->next)
+	{
+		if (c->type == XML_ELEMENT_NODE && xmlStrcmp(c->name, (const xmlChar*) name) == 0)
+		{
+			xmlChar* text = xmlNodeGetContent(c);
+			std::string rv = text ? (const char*) text : "";
+			xmlFree(text);
+			return rv;
+		}
+	}
+	return std::string();
+}
+
+// The paths of all regular files in the archive
 std::vector<std::string> XARArchive::listFiles()
 {
 	std::vector<std::string> rv;
+	
+	m_context->node = nullptr;
+	xmlXPathObjectPtr obj = xmlXPathEvalExpression((const xmlChar*) "/xar/toc//file", m_context);
+	
+	for (int i = 0; obj != nullptr && obj->nodesetval != nullptr && i < obj->nodesetval->nodeNr; i++)
+	{
+		xmlNodePtr node = obj->nodesetval->nodeTab[i];
+		
+		if (childText(node, "type") != "file")
+			continue;
+		
+		std::string path;
+		for (xmlNodePtr n = node; n != nullptr && n->type == XML_ELEMENT_NODE && xmlStrcmp(n->name, (const xmlChar*) "file") == 0; n = n->parent)
+			path = childText(n, "name") + (path.empty() ? "" : "/" + path);
+		rv.push_back(path);
+	}
+	if (obj != nullptr)
+		xmlXPathFreeObject(obj);
 	return rv;
+}
+
+bool XARArchive::fileMode(const std::string& path, unsigned& mode)
+{
+	std::string xpath = xpathForPath(path);
+	bool found = false;
+	
+	if (xpath.length() < 5)
+		return false;
+	// the path expression ends in /data; the mode is a sibling of it
+	xpath = "string(" + xpath.substr(0, xpath.length() - 5) + "/mode)";
+	
+	m_context->node = nullptr;
+	xmlXPathObjectPtr obj = xmlXPathEvalExpression((const xmlChar*) xpath.c_str(), m_context);
+	if (obj != nullptr)
+	{
+		if (obj->stringval && *obj->stringval)
+		{
+			mode = (unsigned) strtoul((const char*) obj->stringval, nullptr, 8);
+			found = true;
+		}
+		xmlXPathFreeObject(obj);
+	}
+	return found;
 }
 
 void XARArchive::decompressTOC(const char* in, size_t inLength, char* out, size_t outLength)
