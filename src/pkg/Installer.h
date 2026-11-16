@@ -12,6 +12,7 @@
 #include "DistributionXml.h"
 #include "ChoicesXml.h"
 #include "ChoiceScript.h"
+#include "InstallerDelegate.h"
 #include <iosfwd>
 
 class Installer
@@ -38,7 +39,9 @@ public:
 	std::vector<std::string> domains();
 	
 	void installPackage();
-	void enableVerboseR() { m_verboseR = true; }
+	// Where messages go and who is asked; the default is the command line (the caller keeps the delegate alive)
+	void setDelegate(InstallerDelegate* delegate) { m_delegate = delegate; }
+	void enableVerboseR() { m_console.enableVerboseR(); }
 private:
 	void loadChoices();
 	ChoiceScript* script();
@@ -46,6 +49,9 @@ private:
 	std::vector<ChoiceScript::ChoiceState> choiceStates();
 	bool isPackageActive(const std::string& pkgId, const DistributionXml::PkgRef& ref);
 	void runChecks();
+	void info(const std::string& text);
+	void warn(const std::string& text);
+	void phase(const std::string& name, double percent);
 	bool runResource(const std::string& program, const std::vector<std::string>& args, int& exitCode);
 	bool confirmExternalProgram(const std::string& program, const std::vector<std::string>& args);
 	bool extractResources();
@@ -64,9 +70,9 @@ private:
 	std::string getInstallLocation();
 	void uninstall(std::shared_ptr<BOMStore> bom, const char* prefix);
 	static void removeDirectory(const char* dir);
-	static void extractFile(std::shared_ptr<Reader> reader, const char* dest, const struct stat* st = nullptr);
+	void extractFile(std::shared_ptr<Reader> reader, const char* dest, const struct stat* st = nullptr);
 	static bool isSafeArchivePath(const std::string& name);
-	static void applyOwner(const char* path, const struct stat& st, int flags);
+	void applyOwner(const char* path, const struct stat& st, int flags);
 	static void applyMtime(const char* path, const struct stat& st, int flags);
 	
 	void runInstallStepScript(const char* scriptName);
@@ -86,7 +92,8 @@ private:
 	std::shared_ptr<PackageInfoXml> m_pkgInfo;
 	std::string m_scriptsDir, m_installLocation;
 
-	bool m_verboseR = false;
+	ConsoleInstallerDelegate m_console;
+	InstallerDelegate* m_delegate = &m_console;
 	bool m_choicesLoaded = false;
 	std::shared_ptr<DistributionXml> m_distribution; // null for a package without Distribution
 	std::vector<DistributionXml::Choice> m_choices;

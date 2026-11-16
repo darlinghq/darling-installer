@@ -89,7 +89,7 @@ ChoiceScript* Installer::script()
 			{
 				std::string error;
 				if (!m_script->addScript(source, error))
-					std::cerr << "installer: Warning: a <script> of the package failed: " << error << std::endl;
+					warn("a <script> of the package failed: " + error);
 			}
 		}
 	}
@@ -240,8 +240,8 @@ bool Installer::isPackageActive(const std::string& pkgId, const DistributionXml:
 		if (js->evaluate(ref.activeExpression, value, error))
 			return value && ref.active;
 	}
-	std::cout << "installer: Warning: package " << pkgId << ": the JavaScript in 'active' is not evaluated"
-			<< (error.empty() ? " (JavaScriptCore is not available)" : " (" + error + ")") << "; treating the package as active\n";
+	warn("package " + pkgId + ": the JavaScript in 'active' is not evaluated"
+			+ (error.empty() ? " (JavaScriptCore is not available)" : " (" + error + ")") + "; treating the package as active");
 	return ref.active;
 }
 
@@ -252,20 +252,7 @@ bool Installer::confirmExternalProgram(const std::string& program, const std::ve
 	for (const std::string& a : args)
 		command += " " + a;
 	
-	if (!isatty(STDIN_FILENO) || !isatty(STDERR_FILENO))
-	{
-		std::cerr << "installer: Warning: the package wants to run '" << command
-				<< "', which needs your confirmation on a terminal; not running it\n";
-		return false;
-	}
-	
-	std::cerr << "installer: The package wants to run the program '" << command
-			<< "' with the privileges of this installer. Allow? [y/N] " << std::flush;
-	
-	char answer[16];
-	if (fgets(answer, sizeof(answer), stdin) == nullptr)
-		return false;
-	return answer[0] == 'y' || answer[0] == 'Y';
+	return m_delegate->confirmExternalProgram(command);
 }
 
 // The Resources directory of the package, extracted to a temporary directory
@@ -310,12 +297,12 @@ bool Installer::runResource(const std::string& program, const std::vector<std::s
 	
 	if (program.empty() || program[0] == '/' || !isSafeArchivePath(program))
 	{
-		std::cerr << "installer: Warning: refusing to run '" << program << "': not a program of the package's Resources\n";
+		warn("refusing to run '" + program + "': not a program of the package's Resources");
 		return false;
 	}
 	if (!m_distribution || !m_distribution->allowExternalScripts())
 	{
-		std::cerr << "installer: Warning: the package runs '" << program << "', but allow-external-scripts is not enabled\n";
+		warn("the package runs '" + program + "', but allow-external-scripts is not enabled");
 		return false;
 	}
 	if (m_allowedPrograms.count(program) == 0)
@@ -367,7 +354,7 @@ bool Installer::runResource(const std::string& program, const std::vector<std::s
 	
 	if (rd > 0)
 	{
-		std::cerr << "installer: Warning: cannot run '" << program << "': " << strerror(err) << "\n";
+		warn("cannot run '" + program + "': " + strerror(err));
 		return false;
 	}
 	exitCode = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
@@ -396,8 +383,8 @@ void Installer::runChecks()
 		
 		if (js == nullptr || !js->evaluate(check.second, passed, error))
 		{
-			std::cout << "installer: Warning: the " << check.first << " script is not evaluated"
-					<< (error.empty() ? " (JavaScriptCore is not available)" : " (" + error + ")") << "; continuing\n";
+			warn(std::string("the ") + check.first + " script is not evaluated"
+					+ (error.empty() ? " (JavaScriptCore is not available)" : " (" + error + ")") + "; continuing");
 			continue;
 		}
 		if (passed)
@@ -405,7 +392,7 @@ void Installer::runChecks()
 		
 		std::string message = js->resultMessage();
 		if (js->resultType() == "Warn")
-			std::cout << "installer: Warning: " << message << "\n";
+			warn(message);
 		else
 			throw std::runtime_error(message.empty() ? std::string("The ") + check.first + " of the package failed" : message);
 	}
@@ -432,7 +419,7 @@ void Installer::applyChoiceChanges(const std::vector<ChoiceChange>& changes)
 			else if (change.attribute == "visible")
 				c.visible = change.value != 0;
 			else if (change.attribute == "customLocation")
-				std::cerr << "installer: Warning: customLocation for choice " << c.id << " is not supported\n";
+				warn("customLocation for choice " + c.id + " is not supported");
 		}
 	}
 }
@@ -673,6 +660,21 @@ void Installer::printChoiceChanges(std::ostream& out)
 	out << "</array>\n</plist>\n";
 }
 
+void Installer::info(const std::string& text)
+{
+	m_delegate->message(InstallerDelegate::Info, text);
+}
+
+void Installer::warn(const std::string& text)
+{
+	m_delegate->message(InstallerDelegate::Warning, text);
+}
+
+void Installer::phase(const std::string& name, double percent)
+{
+	m_delegate->phase(name, percent);
+}
+
 Installer::~Installer()
 {
 	if (!m_resourcesDir.empty())
@@ -755,8 +757,8 @@ void Installer::installPackage()
 		
 		runChecks();
 		
-		std::cout << "installer: Package name is " << distribution->title() << std::endl;
-		std::cout << "installer: Installing at base path " << m_target << std::endl;
+		info("Package name is " + distribution->title());
+		info("Installing at base path " + m_target);
 		
 		for (const DistributionXml::Choice& c : m_choices)
 		{
@@ -773,12 +775,12 @@ void Installer::installPackage()
 				if (attr.find("selected") == std::string::npos)
 					continue; // enabled/visible only matter to a user interface
 				auto err = c.evalErrors.find(attr);
-				std::cout << "installer: Warning: choice " << choiceTitle << ": the JavaScript in '" << attr
-						<< "' is not evaluated" << (err == c.evalErrors.end() ? " (JavaScriptCore is not available)" : " (" + err->second + ")")
-						<< "; treating the choice as selected\n";
+				warn("choice " + choiceTitle + ": the JavaScript in '" + attr + "' is not evaluated"
+						+ (err == c.evalErrors.end() ? " (JavaScriptCore is not available)" : " (" + err->second + ")")
+						+ "; treating the choice as selected");
 			}
 			
-			std::cout << "installer: Installing selected choice " << choiceTitle << std::endl;
+			info("Installing selected choice " + choiceTitle);
 			
 			for (const std::string& pkgId : c.pkgref)
 			{
@@ -808,7 +810,7 @@ void Installer::installPackage()
 	
 	chdir(m_originalCwd.c_str());
 	
-	std::cout << "installer: Installation complete\n";
+	info("Installation complete");
 }
 
 std::string Installer::getSubdirFilePath(const char* fileName)
@@ -938,8 +940,7 @@ void Installer::extractPayload(const char* payloadFileName, std::string destinat
 		}
 		else if (S_ISCHR(st.st_mode) || S_ISBLK(st.st_mode))
 		{
-			std::cout << "installer: Warning: not installing a device node "
-					<< path << std::endl;
+			warn("not installing a device node " + path);
 		}
 		else if (S_ISLNK(st.st_mode))
 		{
@@ -992,7 +993,7 @@ void Installer::applyOwner(const char* path, const struct stat& st, int flags)
 	if (geteuid() != 0)
 		return;
 	if (::fchownat(AT_FDCWD, path, st.st_uid, st.st_gid, flags) != 0)
-		std::cerr << "installer: Warning: cannot set the owner of " << path << ": " << strerror(errno) << std::endl;
+		warn("cannot set the owner of " + std::string(path) + ": " + strerror(errno));
 }
 
 void Installer::applyMtime(const char* path, const struct stat& st, int flags)
@@ -1048,7 +1049,7 @@ void Installer::extractFile(std::shared_ptr<Reader> reader, const char* dest, co
 	{
 		// The owner goes first: changing it clears setuid/setgid bits.
 		if (geteuid() == 0 && ::fchown(fd, st->st_uid, st->st_gid) != 0)
-			std::cerr << "installer: Warning: cannot set the owner of " << dest << ": " << strerror(errno) << std::endl;
+			warn("cannot set the owner of " + std::string(dest) + ": " + strerror(errno));
 		::fchmod(fd, st->st_mode & 07777);
 	}
 
@@ -1097,15 +1098,9 @@ int Installer::installPayload(const char* subdir)
 	identifier = m_pkgInfo->identifier();
 	m_installLocation = m_pkgInfo->installLocation();
 	
-	std::cout << "installer: Installing package " << identifier
-			<< " version " << m_pkgInfo->version()
-			<< " (" << m_pkgInfo->installKBytes() << " KB)\n";
-
-	if (m_verboseR)
-	{
-		std::cout << "installer:PHASE:Installing package...\n";
-		std::cout << "installer:%10.0\n";
-	}
+	info("Installing package " + identifier + " version " + m_pkgInfo->version()
+			+ " (" + std::to_string(m_pkgInfo->installKBytes()) + " KB)");
+	phase("Installing package...", 10);
 	
 	if (m_xar->containsFile(getSubdirFilePath("Scripts")))
 	{
@@ -1120,11 +1115,7 @@ int Installer::installPayload(const char* subdir)
 		// TODO: InstallationCheck and VolumeCheck scripts
 		// http://s.sudre.free.fr/Stuff/PackageMaker_Howto.html
 
-		if (m_verboseR)
-		{
-			std::cout << "installer:PHASE:Running installer actions (preflight)...\n";
-			std::cout << "installer:%20.0\n";
-		}
+		phase("Running installer actions (preflight)...", 20);
 		
 		runInstallStepScript(PackageInfoXml::SCRIPT_PREFLIGHT);
 	}
@@ -1133,10 +1124,8 @@ int Installer::installPayload(const char* subdir)
 	
 	if (ReceiptsDb::getInstalledPackageInfo(m_pkgInfo->identifier().c_str(), installedPackageInfo))
 	{
-		std::cout << "installer: Uninstalling previous version "
-				<< installedPackageInfo.version << std::endl;
-		if (m_verboseR)
-			std::cout << "installer:PHASE:Uninstalling previous version...\n";
+		info("Uninstalling previous version " + installedPackageInfo.version);
+		phase("Uninstalling previous version...", -1);
 		
 		// uninstall
 		auto bom = ReceiptsDb::getInstalledPackageBOM(m_pkgInfo->identifier().c_str());
@@ -1150,28 +1139,19 @@ int Installer::installPayload(const char* subdir)
 	
 	if (scriptsDir[0] != 0)
 	{
-		if (m_verboseR)
-			std::cout << "installer:PHASE:Running installer actions (preinstall)...\n";
+		phase("Running installer actions (preinstall)...", -1);
 
 		// run preinstall script
 		runInstallStepScript(isUpgrade ? PackageInfoXml::SCRIPT_PREUPGRADE : PackageInfoXml::SCRIPT_PREINSTALL);
 	}
 
-	std::cout << "installer: Extracting files\n";
-	if (m_verboseR)
-	{
-		std::cout << "installer:PHASE:Extracting files...\n";
-		std::cout << "installer:%50.0\n";
-	}
+	info("Extracting files");
+	phase("Extracting files...", 50);
 	extractPayload("Payload", getInstallLocation());
 	
 	if (scriptsDir[0] != 0)
 	{
-		if (m_verboseR)
-		{
-			std::cout << "installer:PHASE:Running installer actions (postinstall)...\n";
-			std::cout << "installer:%80.0\n";
-		}
+		phase("Running installer actions (postinstall)...", 80);
 
 		// run postinstall script
 		runInstallStepScript(isUpgrade ? PackageInfoXml::SCRIPT_POSTUPGRADE : PackageInfoXml::SCRIPT_POSTINSTALL);
@@ -1181,11 +1161,7 @@ int Installer::installPayload(const char* subdir)
 		removeDirectory(scriptsDir);
 	}
 
-	if (m_verboseR)
-	{
-		std::cout << "installer:PHASE:Finishing the installation...\n";
-		std::cout << "installer:%90.0\n";
-	}
+	phase("Finishing the installation...", 90);
 	
 	// Write a plist about installed package
 	installedPackageInfo.identifier = identifier;
@@ -1203,11 +1179,7 @@ int Installer::installPayload(const char* subdir)
 	if (bomFile)
 		extractFile(bomFile, bomPath.c_str());
 
-	if (m_verboseR)
-	{
-		std::cout << "installer:PHASE:The software was successfully installed.\n";
-		std::cout << "installer:%100.0\n";
-	}
+	phase("The software was successfully installed.", 100);
 
 	return 0;
 }
