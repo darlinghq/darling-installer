@@ -45,6 +45,8 @@ public:
 	
 	// <options allow-external-scripts>: whether system.run/runOnce may launch programs
 	bool allowExternalScripts() const;
+	// The file named by <welcome>, <readme>, <license>, <conclusion> or <background>, and its MIME type
+	bool resourceFile(const char* element, std::string& file, std::string& mimeType) const;
 	// Text of the <script> elements, which define functions for the expressions
 	std::vector<std::string> scripts() const;
 	// The script expression of <installation-check> and <volume-check>; empty if absent
